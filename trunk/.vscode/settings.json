@@ -1,4 +1,4 @@
 {
     "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
-    "cmake.sourceDirectory": "C:/Projects/ARM/trunk/esp/blink"
+    "cmake.sourceDirectory": "C:/Projects/ARM/trunk/esp/servo_controller"
 }
