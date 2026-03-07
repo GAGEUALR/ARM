@@ -12,8 +12,6 @@
 #include "esp_err.h"
 
 
-#define TEMPORARY_TEST           1
-
 #define BASE_GPIO                GPIO_NUM_4
 #define SHOULDER_GPIO            GPIO_NUM_17
 
