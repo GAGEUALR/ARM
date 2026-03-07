@@ -15,9 +15,11 @@ HASH_FILE = os.path.join(STATE_DIR, "esp_main_c.sha256")
 
 def file_sha256(path):
     h = hashlib.sha256()
+
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
+
     return h.hexdigest()
 
 
@@ -31,6 +33,7 @@ def read_saved_hash():
 
 def write_saved_hash(value):
     os.makedirs(STATE_DIR, exist_ok=True)
+
     with open(HASH_FILE, "w", encoding="utf-8") as f:
         f.write(value)
 
@@ -65,26 +68,21 @@ def run_bash(command, cwd):
         raise SystemExit(process.returncode)
 
 
-def build_flash():
+def build_and_flash():
     cmd = f'. "{EXPORT_SCRIPT}" && idf.py -p {PORT} build flash'
-    run_bash(cmd, ESP_PROJECT_DIR)
-
-
-def flash_only():
-    cmd = f'. "{EXPORT_SCRIPT}" && idf.py -p {PORT} flash'
     run_bash(cmd, ESP_PROJECT_DIR)
 
 
 def print_usage():
     print("Usage:")
-    print("  python3 esp_flash.py --flash   -> build if main.c changed, else flash only")
-    print("  python3 esp_flash.py --build   -> force build flash")
+    print("  python3 esp_flash.py --check   -> build + flash only if main.c changed")
+    print("  python3 esp_flash.py --build   -> always build + flash")
 
 
 def main():
     verify_paths()
 
-    if len(sys.argv) != 2 or sys.argv[1] not in ("--flash", "--build"):
+    if len(sys.argv) != 2 or sys.argv[1] not in ("--check", "--build"):
         print_usage()
         sys.exit(1)
 
@@ -94,17 +92,17 @@ def main():
 
     if mode == "--build":
         print("Forcing build + flash...")
-        build_flash()
+        build_and_flash()
         write_saved_hash(current_hash)
         return
 
-    if current_hash != saved_hash:
-        print("main.c changed since last successful flash. Running build + flash...")
-        build_flash()
-        write_saved_hash(current_hash)
-    else:
-        print("main.c unchanged. Running flash only...")
-        flash_only()
+    if current_hash == saved_hash:
+        print("main.c unchanged. Skipping ESP build/flash.")
+        return
+
+    print("main.c changed since last successful flash. Running build + flash...")
+    build_and_flash()
+    write_saved_hash(current_hash)
 
 
 if __name__ == "__main__":
