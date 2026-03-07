@@ -4,49 +4,31 @@ import sys
 
 TRUNK_DIR = os.path.expanduser("~/Projects/ARM/trunk")
 ESP_PROJECT_DIR = os.path.join(TRUNK_DIR, "esp", "servo_controller")
-ESP_SOURCE_FILE = os.path.join(ESP_PROJECT_DIR, "main", "main.c")
 PI_SCRIPT = os.path.join(TRUNK_DIR, "pi", "system", "control_interface.py")
 PORT = "/dev/ttyUSB0"
 
-def run_command(cmd, cwd):
+EXPORT_SCRIPT = os.path.expanduser("~/esp/esp-idf/export.sh")
+
+def run(cmd, cwd):
     process = subprocess.Popen(
         cmd,
         cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True
+        shell=True,
+        executable="/bin/bash"
     )
-
-    for line in process.stdout:
-        print(line, end="")
-
     process.wait()
 
     if process.returncode != 0:
-        raise SystemExit(process.returncode)
+        sys.exit(process.returncode)
 
 def main():
-    if not os.path.isdir(ESP_PROJECT_DIR):
-        print(f"ESP-IDF project directory not found:\n{ESP_PROJECT_DIR}")
+
+    if not os.path.exists(EXPORT_SCRIPT):
+        print("ESP-IDF export script not found:", EXPORT_SCRIPT)
         sys.exit(1)
 
-    if not os.path.isfile(ESP_SOURCE_FILE):
-        print(f"ESP source file not found:\n{ESP_SOURCE_FILE}")
-        sys.exit(1)
-
-    if not os.path.isfile(PI_SCRIPT):
-        print(f"Pi control script not found:\n{PI_SCRIPT}")
-        sys.exit(1)
-
-    print(f"Using ESP source:\n{ESP_SOURCE_FILE}\n")
-    print(f"Using Pi script:\n{PI_SCRIPT}\n")
-    print(f"Flashing on port: {PORT}\n")
-
-    run_command(["idf.py", "-p", PORT, "build"], ESP_PROJECT_DIR)
-    run_command(["idf.py", "-p", PORT, "flash"], ESP_PROJECT_DIR)
-
-    print("\nESP flashed successfully.\n")
-    print("Starting control_interface.py...\n")
+    build_cmd = f". {EXPORT_SCRIPT} && idf.py -p {PORT} build flash"
+    run(build_cmd, ESP_PROJECT_DIR)
 
     os.execvp("python3", ["python3", PI_SCRIPT])
 
