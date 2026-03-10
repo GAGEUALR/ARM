@@ -1,4 +1,6 @@
 {
+  "cmake.cmakePath": "C:/Espressif/tools/cmake/3.30.2/bin/cmake.exe",
     "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
-    "cmake.sourceDirectory": "C:/Projects/ARM/trunk/esp/servo_controller"
+    "cmake.sourceDirectory": "C:/Projects/ARM/trunk/esp/servo_controller",
+    "C_Cpp.default.compilerPath": "C:/Projects/w64devkit/bin/gcc.exe"
 }

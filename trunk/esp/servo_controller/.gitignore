@@ -17,7 +17,9 @@
 *.log
 
 # Build artifacts
+a.vscode/
 build/
+sdkconfig
 *.o
 *.a
 *.out
@@ -33,7 +35,12 @@ sdkconfig.old
 # ESP-IDF dependencies
 managed_components/
 .espressif/
-
+c_cpp_properties.json
+settings.json
+CMakeCache.txt
+query.jsoncmake.check_cache
+CmakeConfigureLog.yaml
+CMakeSystem.cmake
 # CMake generated files
 CMakeCache.txt
 CMakeFiles/

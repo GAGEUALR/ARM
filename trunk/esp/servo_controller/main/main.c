@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "main.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -13,86 +15,7 @@
 #include "driver/gpio.h"
 #include "esp_err.h"
 
-/* =========================================================
-   GPIO assignment
-   Edit these to match your wiring.
-   ========================================================= */
-#define BASE_GPIO               GPIO_NUM_4
-#define SHOULDER_GPIO           GPIO_NUM_17
-#define FOREARM_GPIO            GPIO_NUM_16
-#define WRIST_GPIO              GPIO_NUM_18
-#define GRIPPER_GPIO            GPIO_NUM_19
 
-/* =========================================================
-   LEDC / servo configuration
-   ========================================================= */
-#define LEDC_TIMER_ID           LEDC_TIMER_0
-#define LEDC_SPEED_MODE         LEDC_HIGH_SPEED_MODE
-#define LEDC_DUTY_RESOLUTION    LEDC_TIMER_16_BIT
-
-#define BASE_CHANNEL            LEDC_CHANNEL_0
-#define SHOULDER_CHANNEL        LEDC_CHANNEL_1
-#define FOREARM_CHANNEL         LEDC_CHANNEL_2
-#define WRIST_CHANNEL           LEDC_CHANNEL_3
-#define GRIPPER_CHANNEL         LEDC_CHANNEL_4
-
-#define SERVO_FREQ_HZ           50
-#define SERVO_PERIOD_US         20000
-
-#define SERVO_US_MIN_SAFE       500
-#define SERVO_US_MAX_SAFE       2500
-#define SERVO_US_CENTER         1500
-
-/* Maximum movement per 20 ms tick */
-#define BASE_MAX_STEP_US_PER_TICK       14
-#define SHOULDER_MAX_STEP_US_PER_TICK   14
-#define FOREARM_MAX_STEP_US_PER_TICK    14
-#define WRIST_MAX_STEP_US_PER_TICK      14
-#define GRIPPER_MAX_STEP_US_PER_TICK    14
-
-/* Input scaling */
-#define TRIGGER_RAW_MAX         1023
-#define STICK_RAW_MAX_SIGNED    1023
-
-#define TRIGGER_DEADBAND        60
-#define STICK_DEADBAND_SIGNED   200
-
-/* USB serial */
-#define USB_UART_NUM            UART_NUM_0
-#define USB_UART_BAUD           115200
-#define UART_RX_BUF_SIZE        1024
-
-/* Two-servo movement limit */
-#define MAX_ACTIVE_SERVOS_PER_TICK      2
-
-/* =========================================================
-   Shared state from Pi
-   ========================================================= */
-typedef struct {
-    volatile int lt;       /* 0..1023 */
-    volatile int rt;       /* 0..1023 */
-    volatile int lsx;      /* -1023..1023 */
-    volatile int rsx;      /* -1023..1023 */
-    volatile int lb;       /* 0 or 1 */
-    volatile int rb;       /* 0 or 1 */
-    volatile int dpx;      /* -1, 0, 1 */
-    volatile int shutdown_requested;
-} control_state_t;
-
-static control_state_t g = {
-    .lt = 0,
-    .rt = 0,
-    .lsx = 0,
-    .rsx = 0,
-    .lb = 0,
-    .rb = 0,
-    .dpx = 0,
-    .shutdown_requested = 0
-};
-
-/* =========================================================
-   Helpers
-   ========================================================= */
 static inline uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 {
     if (v < lo) return lo;
@@ -112,9 +35,7 @@ static inline int abs_i(int v)
     return (v < 0) ? -v : v;
 }
 
-/* =========================================================
-   Servo PWM conversion
-   ========================================================= */
+
 static inline uint32_t servo_us_to_duty(uint32_t pulse_us)
 {
     const uint32_t duty_max = (1u << 16) - 1u;
@@ -123,9 +44,6 @@ static inline uint32_t servo_us_to_duty(uint32_t pulse_us)
     return (pulse_us * duty_max) / SERVO_PERIOD_US;
 }
 
-/* =========================================================
-   Servo setup / control
-   ========================================================= */
 static void configure_servo_channel(gpio_num_t gpio, ledc_channel_t channel)
 {
     ledc_channel_config_t ch = {
@@ -178,9 +96,6 @@ static void servo_disable(ledc_channel_t channel)
     ESP_ERROR_CHECK(ledc_stop(LEDC_SPEED_MODE, channel, 0));
 }
 
-/* =========================================================
-   UART setup
-   ========================================================= */
 static void usb_uart_init(void)
 {
     const uart_config_t cfg = {
@@ -196,18 +111,6 @@ static void usb_uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(USB_UART_NUM, &cfg));
 }
 
-/* =========================================================
-   Parsing helpers
-   Supports:
-     LT=123
-     RT=456
-     LSX=-200
-     RSX=300
-     LB=1
-     RB=0
-     DPX=-1
-     SHUTDOWN
-   ========================================================= */
 static const char *skip_spaces(const char *s)
 {
     while (*s && isspace((unsigned char)*s)) {
@@ -259,9 +162,6 @@ static int parse_kv_line(const char *line, char key_out[5], int *value_out)
     return 1;
 }
 
-/* =========================================================
-   UART RX task
-   ========================================================= */
 static void uart_rx_task(void *arg)
 {
     (void)arg;
@@ -286,7 +186,7 @@ static void uart_rx_task(void *arg)
 
             if (idx > 0) {
                 if (strcmp(line, "SHUTDOWN") == 0) {
-                    g.shutdown_requested = 1;
+                    system.shutdown_requested = 1;
                 } else {
                     char key[5];
                     int val;
@@ -295,31 +195,31 @@ static void uart_rx_task(void *arg)
                         if (strcmp(key, "LT") == 0) {
                             val = clamp_i(val, 0, TRIGGER_RAW_MAX);
                             if (val <= TRIGGER_DEADBAND) val = 0;
-                            g.lt = val;
+                            system.lt = val;
                         }
                         else if (strcmp(key, "RT") == 0) {
                             val = clamp_i(val, 0, TRIGGER_RAW_MAX);
                             if (val <= TRIGGER_DEADBAND) val = 0;
-                            g.rt = val;
+                            system.rt = val;
                         }
                         else if (strcmp(key, "LSX") == 0) {
                             val = clamp_i(val, -STICK_RAW_MAX_SIGNED, STICK_RAW_MAX_SIGNED);
                             if (abs_i(val) <= STICK_DEADBAND_SIGNED) val = 0;
-                            g.lsx = val;
+                            system.lsx = val;
                         }
                         else if (strcmp(key, "RSX") == 0) {
                             val = clamp_i(val, -STICK_RAW_MAX_SIGNED, STICK_RAW_MAX_SIGNED);
                             if (abs_i(val) <= STICK_DEADBAND_SIGNED) val = 0;
-                            g.rsx = val;
+                            system.rsx = val;
                         }
                         else if (strcmp(key, "LB") == 0) {
-                            g.lb = (val != 0) ? 1 : 0;
+                            system.lb = (val != 0) ? 1 : 0;
                         }
                         else if (strcmp(key, "RB") == 0) {
-                            g.rb = (val != 0) ? 1 : 0;
+                            system.rb = (val != 0) ? 1 : 0;
                         }
                         else if (strcmp(key, "DPX") == 0) {
-                            g.dpx = clamp_i(val, -1, 1);
+                            system.dpx = clamp_i(val, -1, 1);
                         }
                     }
                 }
@@ -337,9 +237,6 @@ static void uart_rx_task(void *arg)
     }
 }
 
-/* =========================================================
-   Motion step helpers
-   ========================================================= */
 static int step_from_trigger(int trig, int max_step_per_tick)
 {
     if (trig <= 0) {
@@ -417,25 +314,6 @@ static int pulse_at_target(uint32_t a, uint32_t b, uint32_t tolerance)
     return (b - a) <= tolerance;
 }
 
-/* =========================================================
-   Two-servo arbitration
-   Only the two strongest requested motions are allowed
-   to move per 20 ms tick.
-   ========================================================= */
-typedef struct {
-    int servo_index;
-    int step;
-    int magnitude;
-    int priority;
-} motion_request_t;
-
-/* Priority on tie:
-   0 = gripper
-   1 = shoulder
-   2 = base
-   3 = forearm
-   4 = wrist
-*/
 static void consider_request(
     motion_request_t req,
     motion_request_t *best_a,
@@ -472,22 +350,8 @@ static void consider_request(
     }
 }
 
-/* =========================================================
-   Servo control task
-   Mapping:
-     Base     -> LSX
-     Shoulder -> RSX
-     Forearm  -> LB / RB
-     Wrist    -> D-pad left / right
-     Gripper  -> LT / RT
-
-   Constraint:
-     Only TWO servos may move at once.
-   ========================================================= */
 static void servo_control_task(void *arg)
 {
-    (void)arg;
-
     uint32_t base_pulse     = SERVO_US_CENTER;
     uint32_t shoulder_pulse = SERVO_US_CENTER;
     uint32_t forearm_pulse  = SERVO_US_CENTER;
@@ -513,34 +377,23 @@ static void servo_control_task(void *arg)
     servo_write_us(GRIPPER_CHANNEL, gripper_pulse);
 
     while (1) {
-        if (g.shutdown_requested && !shutdown_complete) {
-            move_toward_target(&base_pulse,     BASE_REST_US,     SHUTDOWN_STEP_US);
-            move_toward_target(&shoulder_pulse, SHOULDER_REST_US, SHUTDOWN_STEP_US);
-            move_toward_target(&forearm_pulse,  FOREARM_REST_US,  SHUTDOWN_STEP_US);
-            move_toward_target(&wrist_pulse,    WRIST_REST_US,    SHUTDOWN_STEP_US);
-            move_toward_target(&gripper_pulse,  GRIPPER_REST_US,  SHUTDOWN_STEP_US);
+        if (system.shutdown_requested && !shutdown_complete) {
 
-            servo_write_us(BASE_CHANNEL, base_pulse);
-            servo_write_us(SHOULDER_CHANNEL, shoulder_pulse);
-            servo_write_us(FOREARM_CHANNEL, forearm_pulse);
-            servo_write_us(WRIST_CHANNEL, wrist_pulse);
-            servo_write_us(GRIPPER_CHANNEL, gripper_pulse);
+            servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
+            vTaskDelay(pdMS_TO_TICKS(100));
 
-            if (pulse_at_target(base_pulse, BASE_REST_US, SHUTDOWN_TOL_US) &&
-                pulse_at_target(shoulder_pulse, SHOULDER_REST_US, SHUTDOWN_TOL_US) &&
-                pulse_at_target(forearm_pulse, FOREARM_REST_US, SHUTDOWN_TOL_US) &&
-                pulse_at_target(wrist_pulse, WRIST_REST_US, SHUTDOWN_TOL_US) &&
-                pulse_at_target(gripper_pulse, GRIPPER_REST_US, SHUTDOWN_TOL_US)) {
+            servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
+            vTaskDelay(pdMS_TO_TICKS(100));
 
-                servo_disable(BASE_CHANNEL);
-                servo_disable(SHOULDER_CHANNEL);
-                servo_disable(FOREARM_CHANNEL);
-                servo_disable(WRIST_CHANNEL);
-                servo_disable(GRIPPER_CHANNEL);
-                shutdown_complete = 1;
-            }
+            servo_write_us(FOREARM_CHANNEL, SERVO_US_CENTER);
+            vTaskDelay(pdMS_TO_TICKS(100));
 
-            vTaskDelay(pdMS_TO_TICKS(20));
+            servo_write_us(WRIST_CHANNEL, SERVO_US_CENTER);
+            vTaskDelay(pdMS_TO_TICKS(100));
+
+            servo_write_us(GRIPPER_CHANNEL, SERVO_US_CENTER);
+            vTaskDelay(pdMS_TO_TICKS(100));
+
             continue;
         }
 
@@ -550,13 +403,13 @@ static void servo_control_task(void *arg)
         }
 
         /* ----- Read latest controls ----- */
-        int lt  = g.lt;
-        int rt  = g.rt;
-        int lsx = g.lsx;
-        int rsx = g.rsx;
-        int lb  = g.lb;
-        int rb  = g.rb;
-        int dpx = g.dpx;
+        int lt  = system.lt;
+        int rt  = system.rt;
+        int lsx = system.lsx;
+        int rsx = system.rsx;
+        int lb  = system.lb;
+        int rb  = system.rb;
+        int dpx = system.dpx;
 
         /* ----- Convert controls to requested step sizes ----- */
         int base_step = step_from_stick_signed(lsx, BASE_MAX_STEP_US_PER_TICK);
