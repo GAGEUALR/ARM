@@ -6,8 +6,8 @@
    Edit these to match your wiring.
    ========================================================= */
 #define BASE_GPIO               GPIO_NUM_4
-#define SHOULDER_GPIO           GPIO_NUM_17
 #define FOREARM_GPIO            GPIO_NUM_16
+#define SHOULDER_GPIO           GPIO_NUM_17
 #define WRIST_GPIO              GPIO_NUM_18
 #define GRIPPER_GPIO            GPIO_NUM_19
 
@@ -64,7 +64,7 @@ typedef struct {
     volatile int shutdown_requested;
 } control_state_t;
 
-static control_state_t system = {
+static control_state_t g = {
     .lt = 0,
     .rt = 0,
     .lsx = 0,
@@ -74,10 +74,3 @@ static control_state_t system = {
     .dpx = 0,
     .shutdown_requested = 0
 };
-
-typedef struct {
-    int servo_index;
-    int step;
-    int magnitude;
-    int priority;
-} motion_request_t;
