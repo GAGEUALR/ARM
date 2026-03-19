@@ -9,6 +9,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #include "driver/ledc.h"
 #include "driver/uart.h"
@@ -16,23 +17,14 @@
 #include "esp_err.h"
 
 
+static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
+
 static inline uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
-}
-
-static inline int clamp_i(int v, int lo, int hi)
-{
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
-
-static inline int abs_i(int v)
-{
-    return (v < 0) ? -v : v;
 }
 
 static inline uint32_t servo_us_to_duty(uint32_t pulse_us)
@@ -90,11 +82,6 @@ static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_SPEED_MODE, channel));
 }
 
-static void servo_disable(ledc_channel_t channel)
-{
-    ESP_ERROR_CHECK(ledc_stop(LEDC_SPEED_MODE, channel, 0));
-}
-
 static void usb_uart_init(void)
 {
     const uart_config_t cfg = {
@@ -110,57 +97,6 @@ static void usb_uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(USB_UART_NUM, &cfg));
 }
 
-static const char *skip_spaces(const char *s)
-{
-    while (*s && isspace((unsigned char)*s)) {
-        s++;
-    }
-    return s;
-}
-
-static int parse_kv_line(const char *line, char key_out[5], int *value_out)
-{
-    line = skip_spaces(line);
-
-    if (!isalpha((unsigned char)line[0]) || !isalpha((unsigned char)line[1])) {
-        return 0;
-    }
-
-    char key[5] = {0};
-    int key_len = 0;
-
-    while (isalpha((unsigned char)*line) && key_len < 4) {
-        key[key_len++] = (char)toupper((unsigned char)*line);
-        line++;
-    }
-
-    line = skip_spaces(line);
-
-    if (*line != '=') {
-        return 0;
-    }
-    line++;
-
-    line = skip_spaces(line);
-
-    char *end = NULL;
-    long v = strtol(line, &end, 10);
-
-    if (end == line) {
-        return 0;
-    }
-
-    end = (char *)skip_spaces(end);
-
-    if (*end != '\0') {
-        return 0;
-    }
-
-    strcpy(key_out, key);
-    *value_out = (int)v;
-    return 1;
-}
-
 static void uart_rx_task(void *arg)
 {
     (void)arg;
@@ -172,56 +108,27 @@ static void uart_rx_task(void *arg)
     while (1) {
         int n = uart_read_bytes(USB_UART_NUM, &ch, 1, pdMS_TO_TICKS(100));
 
-        if (n <= 0) {
-            continue;
-        }
-
-        if (ch == '\r') {
-            continue;
-        }
+        if (n <= 0) continue;
+        if (ch == '\r') continue;
 
         if (ch == '\n') {
             line[idx] = '\0';
 
             if (idx > 0) {
-                if (strcmp(line, "SHUTDOWN") == 0) {
-                    system.shutdown_requested = 1;
-                } else {
-                    char key[5];
-                    int val;
 
-                    if (parse_kv_line(line, key, &val)) {
-                        if (strcmp(key, "LT") == 0) {
-                            val = clamp_i(val, 0, TRIGGER_RAW_MAX);
-                            if (val <= TRIGGER_DEADBAND) val = 0;
-                            system.lt = val;
-                        }
-                        else if (strcmp(key, "RT") == 0) {
-                            val = clamp_i(val, 0, TRIGGER_RAW_MAX);
-                            if (val <= TRIGGER_DEADBAND) val = 0;
-                            system.rt = val;
-                        }
-                        else if (strcmp(key, "LSX") == 0) {
-                            val = clamp_i(val, -STICK_RAW_MAX_SIGNED, STICK_RAW_MAX_SIGNED);
-                            if (abs_i(val) <= STICK_DEADBAND_SIGNED) val = 0;
-                            system.lsx = val;
-                        }
-                        else if (strcmp(key, "RSX") == 0) {
-                            val = clamp_i(val, -STICK_RAW_MAX_SIGNED, STICK_RAW_MAX_SIGNED);
-                            if (abs_i(val) <= STICK_DEADBAND_SIGNED) val = 0;
-                            system.rsx = val;
-                        }
-                        else if (strcmp(key, "LB") == 0) {
-                            system.lb = (val != 0) ? 1 : 0;
-                        }
-                        else if (strcmp(key, "RB") == 0) {
-                            system.rb = (val != 0) ? 1 : 0;
-                        }
-                        else if (strcmp(key, "DPX") == 0) {
-                            system.dpx = clamp_i(val, -1, 1);
-                        }
-                    }
+                taskENTER_CRITICAL(&mux);
+
+                if (strcmp(line, "SHUTDOWN") == 0) {
+                    system_state.shutdown_requested = true;
+                } else {
+                    strncpy(system_state.command, line, COMMAND_BUFFER_SIZE - 1);
+                    system_state.command[COMMAND_BUFFER_SIZE - 1] = '\0';
                 }
+
+                system_state.rx_valid = true;
+                system_state.send_ack = true;
+
+                taskEXIT_CRITICAL(&mux);
             }
 
             idx = 0;
@@ -230,119 +137,144 @@ static void uart_rx_task(void *arg)
 
         if (idx < (int)sizeof(line) - 1) {
             line[idx++] = (char)ch;
-        } else {
-            idx = 0;
         }
     }
 }
 
-static void move_toward_target(uint32_t *pulse, uint32_t target, uint32_t step_us)
+static void decode_command(char *cmd)
 {
-    if (*pulse < target) {
-        uint32_t d = target - *pulse;
-        *pulse += (d > step_us) ? step_us : d;
+    char key1[5] = {0};
+    char key2[5] = {0};
+    int val1 = 0;
+    int val2 = 0;
+
+    if (!parse_command_line(cmd, key1, &val1, key2, &val2)) {
+        return;
     }
-    else if (*pulse > target) {
-        uint32_t d = *pulse - target;
-        *pulse -= (d > step_us) ? step_us : d;
+
+    // ----- FIRST COMMAND -----
+    if (strcmp(key1, "B") == 0) {
+        // BASE
+        if (val1 == 0) {
+            // left
+        } else if (val1 == 1) {
+            // right
+        }
     }
-}
-
-static int pulse_at_target(uint32_t a, uint32_t b, uint32_t tolerance)
-{
-    if (a > b) {
-        return (a - b) <= tolerance;
+    else if (strcmp(key1, "S") == 0) {
+        // SHOULDER
+        if (val1 == 0) {
+        } else if (val1 == 1) {
+        }
     }
-    return (b - a) <= tolerance;
-}
+    else if (strcmp(key1, "F") == 0) {
+        // FOREARM
+        if (val1 == 0) {
+        } else if (val1 == 1) {
+        }
+    }
+    else if (strcmp(key1, "W") == 0) {
+        // WRIST
+        if (val1 == 0) {
+        } else if (val1 == 1) {
+        }
+    }
+    else if (strcmp(key1, "G") == 0) {
+        // GRIPPER
+        if (val1 == 0) {
+        } else if (val1 == 1) {
+        }
+    }
 
-static bool startup_control(){
-    //start the system in a "home" position
-
-    
-    uint32_t base_pulse     = SERVO_US_CENTER;
-    uint32_t shoulder_pulse = SERVO_US_CENTER;
-    uint32_t forearm_pulse  = SERVO_US_CENTER;
-    uint32_t wrist_pulse    = SERVO_US_CENTER;
-    uint32_t gripper_pulse  = SERVO_US_CENTER;
-
-    const uint32_t BASE_REST_US     = SERVO_US_CENTER;
-    const uint32_t SHOULDER_REST_US = 1200;
-    const uint32_t FOREARM_REST_US  = 1400;
-    const uint32_t WRIST_REST_US    = SERVO_US_CENTER;
-    const uint32_t GRIPPER_REST_US  = SERVO_US_CENTER;
-
-    const uint32_t SHUTDOWN_STEP_US = 12;
-    const uint32_t SHUTDOWN_TOL_US  = 8;
-
-    servo_write_us(BASE_CHANNEL, base_pulse);
-    servo_write_us(SHOULDER_CHANNEL, shoulder_pulse);
-    servo_write_us(FOREARM_CHANNEL, forearm_pulse);
-    servo_write_us(WRIST_CHANNEL, wrist_pulse);
-    servo_write_us(GRIPPER_CHANNEL, gripper_pulse);
-
-    return true;
+    // ----- SECOND COMMAND -----
+    if (strcmp(key2, "B") == 0) {
+        if (val2 == 0) {
+        } else if (val2 == 1) {
+        }
+    }
+    else if (strcmp(key2, "S") == 0) {
+        if (val2 == 0) {
+        } else if (val2 == 1) {
+        }
+    }
+    else if (strcmp(key2, "F") == 0) {
+        if (val2 == 0) {
+        } else if (val2 == 1) {
+        }
+    }
+    else if (strcmp(key2, "W") == 0) {
+        if (val2 == 0) {
+        } else if (val2 == 1) {
+        }
+    }
+    else if (strcmp(key2, "G") == 0) {
+        if (val2 == 0) {
+        } else if (val2 == 1) {
+        }
+    }
 }
 
 static void servo_control_task(void *arg)
 {
-    bool system_ON_state = startup_control();
+    (void)arg;
+
+    bool startup_active = true;
+
+    // one-time startup position
+    servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
+    servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
+    servo_write_us(FOREARM_CHANNEL, SERVO_US_CENTER);
+    servo_write_us(WRIST_CHANNEL, SERVO_US_CENTER);
+    servo_write_us(GRIPPER_CHANNEL, SERVO_US_CENTER);
+
+    char local_cmd[COMMAND_BUFFER_SIZE];
 
     while (1) {
-        if (system.shutdown_requested && !system_ON_state) {
 
+        // shutdown
+        if (system_state.shutdown_requested) {
             servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
-            vTaskDelay(pdMS_TO_TICKS(100));
-
             servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
-            vTaskDelay(pdMS_TO_TICKS(100));
-
             servo_write_us(FOREARM_CHANNEL, SERVO_US_CENTER);
-            vTaskDelay(pdMS_TO_TICKS(100));
-
             servo_write_us(WRIST_CHANNEL, SERVO_US_CENTER);
-            vTaskDelay(pdMS_TO_TICKS(100));
-
             servo_write_us(GRIPPER_CHANNEL, SERVO_US_CENTER);
-            vTaskDelay(pdMS_TO_TICKS(100));
 
-            continue;
-        }
-
-        if (system_ON_state) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
-        /* ----- Read latest controls ----- */
-        int lt  = system.lt;
-        int rt  = system.rt;
-        int lsx = system.lsx;
-        int rsx = system.rsx;
-        int lb  = system.lb;
-        int rb  = system.rb;
-        int dpx = system.dpx;
-
-        /* ----- Convert controls to requested step sizes ----- */
-        int base_step = step_from_stick_signed(lsx, BASE_MAX_STEP_US_PER_TICK);
-        int shoulder_step = step_from_stick_signed(rsx, SHOULDER_MAX_STEP_US_PER_TICK);
-        int forearm_step = step_from_button_pair(lb, rb, FOREARM_MAX_STEP_US_PER_TICK);
-        int wrist_step = step_from_dpad_x(dpx, WRIST_MAX_STEP_US_PER_TICK);
-
-        int gripper_step = 0;
-        int grip_open_step = step_from_trigger(rt, GRIPPER_MAX_STEP_US_PER_TICK);
-        int grip_close_step = step_from_trigger(lt, GRIPPER_MAX_STEP_US_PER_TICK);
-
-        if (grip_open_step > 0 && grip_close_step == 0) {
-            gripper_step = grip_open_step;
-        }
-        else if (grip_close_step > 0 && grip_open_step == 0) {
-            gripper_step = -grip_close_step;
+        // startup hold
+        if (startup_active) {
+            if (system_state.rx_valid) {
+                startup_active = false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
         }
 
-        
+        // safe read
+        if (system_state.rx_valid) {
+
+            taskENTER_CRITICAL(&mux);
+
+            strncpy(local_cmd, system_state.command, COMMAND_BUFFER_SIZE);
+            system_state.rx_valid = false;
+
+            taskEXIT_CRITICAL(&mux);
+
+            decode_command(local_cmd);
+
+            // send ACK
+            if (system_state.send_ack) {
+                uart_write_bytes(USB_UART_NUM, "OK\n", 3);
+                system_state.send_ack = false;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
+
 void app_main(void)
 {
     servo_init();
