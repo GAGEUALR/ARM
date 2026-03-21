@@ -188,7 +188,7 @@ static bool parse_packet(const uint8_t *packet, int packet_length, requested_sta
     return true;
 }
 
-static uint8_t calculate_checksum(const uint8_t *packet, int packet_length)
+extern uint8_t calculate_checksum(const uint8_t *packet, int packet_length)
 {
     uint8_t checksum = 0;
     int i = 0;

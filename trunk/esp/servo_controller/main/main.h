@@ -56,6 +56,8 @@
 #define STATE_QUEUE_LENGTH 1
 #define CONTROL_ACK_QUEUE_LENGTH 1
 
+extern uint8_t calculate_checksum(const uint8_t *packet, int packet_length);
+
 typedef struct {
     bool active;
     uint8_t direction;
