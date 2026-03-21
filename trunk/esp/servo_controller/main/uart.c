@@ -1,11 +1,8 @@
 #include "main.h"
 
-static void usb_uart_init(void);
 
 void uart_rx_task(void *arg)
 {
-    usb_uart_init();
-
     (void)arg;
 
     uint8_t ch;

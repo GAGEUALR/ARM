@@ -3,7 +3,6 @@
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us);
 static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi);
 static inline uint32_t servo_us_to_duty(uint32_t pulse_us);
-static void servo_init(void);
 static void configure_servo_channel(gpio_num_t gpio, ledc_channel_t channel);
 static bool decode_command(char *cmd);
 static const char *skip_spaces(const char *s);
@@ -15,8 +14,6 @@ static int parse_command_line(const char *line,
 
 void servo_control_task(void *arg)
 {
-
-    servo_init();
 
     (void)arg;
 
@@ -115,7 +112,7 @@ static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_SPEED_MODE, channel));
 }
 
-static void servo_init(void)
+void servo_init(void)
 {
     ledc_timer_config_t timer = {
         .speed_mode       = LEDC_SPEED_MODE,

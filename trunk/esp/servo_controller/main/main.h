@@ -58,6 +58,9 @@
 #define COMMAND_BUFFER_SIZE 64
 
 //function declarations
+void usb_uart_init(void);
+void servo_init(void);
+
 void servo_control_task(void *arg);
 void uart_rx_task(void *arg);
 
