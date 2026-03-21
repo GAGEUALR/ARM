@@ -19,11 +19,11 @@ ESP_PORT = "/dev/ttyUSB0"
 ESP_BAUD = 115200
 
 SEND_HZ = 50
-SEND_DT = 1.0 / SEND_HZ                     #send every 20ms
+SEND_DT = 1.0 / SEND_HZ
 
-START_BYTE = 0xAA                           #give the esp an expected start byte
-SERVO_ORDER = ("B", "S", "F", "W", "G")     #esp expects uart communication in this format
-NEUTRAL = None                              #if no button press, servo should not move
+START_BYTE = 0xAA
+SERVO_ORDER = ("B", "S", "F", "W", "G")
+NEUTRAL = None
 
 TRIGGER_THRESHOLD = 80
 STICK_DEADBAND = 12000
@@ -38,6 +38,7 @@ def clamp(v, lo, hi):
 
     return v
 
+
 def stick_direction(raw_value, center=0, deadband=STICK_DEADBAND):
     distance_from_center = raw_value - center
 
@@ -49,6 +50,7 @@ def stick_direction(raw_value, center=0, deadband=STICK_DEADBAND):
 
     return NEUTRAL
 
+
 def dpad_direction(raw_value):
     limited_value = clamp(int(raw_value), -1, 1)
 
@@ -59,6 +61,7 @@ def dpad_direction(raw_value):
         return 1
 
     return NEUTRAL
+
 
 def trigger_direction(lt_value, rt_value, threshold=TRIGGER_THRESHOLD):
     left_trigger_active = lt_value > threshold
@@ -72,6 +75,7 @@ def trigger_direction(lt_value, rt_value, threshold=TRIGGER_THRESHOLD):
 
     return NEUTRAL
 
+
 def button_pair_direction(negative_pressed, positive_pressed):
     if negative_pressed and not positive_pressed:
         return 0
@@ -80,6 +84,7 @@ def button_pair_direction(negative_pressed, positive_pressed):
         return 1
 
     return NEUTRAL
+
 
 def build_commands(lt_value, rt_value, lsx_value, rsx_value, dpx_value, lb_pressed, rb_pressed):
     raw_commands = {
@@ -92,6 +97,7 @@ def build_commands(lt_value, rt_value, lsx_value, rsx_value, dpx_value, lb_press
 
     return raw_commands
 
+
 def update_press_order(raw_commands, press_order):
     inactive_servos = [servo_name for servo_name in press_order if raw_commands.get(servo_name) is None]
 
@@ -101,6 +107,7 @@ def update_press_order(raw_commands, press_order):
     for servo_name in SERVO_ORDER:
         if raw_commands[servo_name] is not None and servo_name not in press_order:
             press_order.append(servo_name)
+
 
 def choose_two_oldest(raw_commands, press_order):
     chosen_commands = {}
@@ -113,6 +120,7 @@ def choose_two_oldest(raw_commands, press_order):
                 break
 
     return chosen_commands
+
 
 def build_full_state(chosen_commands):
     full_state = {
@@ -127,6 +135,7 @@ def build_full_state(chosen_commands):
         full_state[servo_name] = servo_value
 
     return full_state
+
 
 def build_packet(full_state):
     packet_bytes = bytearray()
@@ -156,7 +165,7 @@ def main():
             f"{EVENT_PATH} name mismatch. Expected '{REQUIRED_NAME}', got '{controller.name}'"
         )
 
-    serial_port = serial.Serial(ESP_PORT, ESP_BAUD, timeout=0.1)
+    serial_port = serial.Serial(ESP_PORT, ESP_BAUD, timeout=0.02)
 
     print(f"Using controller: {EVENT_PATH} name='{controller.name}'")
     print(f"Connected to ESP32 on {ESP_PORT} @baud {ESP_BAUD}")
@@ -238,6 +247,10 @@ def main():
                     serial_port.flush()
                     last_packet_sent = packet
 
+                    response = serial_port.readline().decode(errors="ignore").strip()
+                    if response:
+                        print(response)
+
                 while next_send_time <= current_time:
                     next_send_time += SEND_DT
 
@@ -253,8 +266,11 @@ def main():
         neutral_packet = build_packet(neutral_state)
 
         for _ in range(3):
-            serial_port.write(neutral_packet)   #will be a shutdown command later
+            serial_port.write(neutral_packet)
             serial_port.flush()
+            response = serial_port.readline().decode(errors="ignore").strip()
+            if response:
+                print(response)
             time.sleep(0.02)
 
     finally:

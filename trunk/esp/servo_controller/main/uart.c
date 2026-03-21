@@ -4,7 +4,8 @@
 #define UART_PACKET_MIN_SIZE 7
 #define UART_PACKET_MAX_SIZE 12
 
-static bool parse_packet(const uint8_t *packet, int packet_length, desired_state_t *desired_state_out);
+static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out);
+static uint8_t calculate_checksum(const uint8_t *packet, int packet_length);
 
 void uart_rx_task(void *arg)
 {
@@ -55,11 +56,28 @@ void uart_rx_task(void *arg)
         }
 
         if (packet_index >= UART_PACKET_MIN_SIZE) {
-            desired_state_t desired_state;
+            requested_state_t requested_state;
 
-            if (parse_packet(packet, packet_index, &desired_state)) {
-                xQueueOverwrite(desired_state_queue, &desired_state);
-                uart_write_bytes(USB_UART_NUM, "OK\n", 3);
+            if (parse_packet(packet, packet_index, &requested_state)) {
+                control_ack_t control_ack;
+                uint8_t packet_checksum = packet[packet_index - 1];
+
+                xQueueReset(control_ack_q);
+                xQueueOverwrite(servo_command_q, &requested_state);
+
+                if (xQueueReceive(control_ack_q, &control_ack, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    if (control_ack.accepted && control_ack.checksum == packet_checksum) {
+                        uart_write_bytes(USB_UART_NUM, "OK\n", 3);
+                    }
+                    else {
+                        system_state.shutdown_requested = true;
+                        uart_write_bytes(USB_UART_NUM, "NOK\n", 4);
+                    }
+                }
+                else {
+                    system_state.shutdown_requested = true;   //shutdown seems a little much for a timeout, I'll change this later
+                    uart_write_bytes(USB_UART_NUM, "NOK\n", 4);
+                }
 
                 receiving_packet = false;
                 packet_index = 0;
@@ -90,11 +108,11 @@ void usb_uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(USB_UART_NUM, &cfg));
 }
 
-static bool parse_packet(const uint8_t *packet, int packet_length, desired_state_t *desired_state_out)
+static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out)
 {
     static const uint8_t expected_servo_order[5] = { 'B', 'S', 'F', 'W', 'G' };
 
-    if (packet == NULL || desired_state_out == NULL) {
+    if (packet == NULL || requested_state_out == NULL) {
         return false;
     }
 
@@ -106,73 +124,79 @@ static bool parse_packet(const uint8_t *packet, int packet_length, desired_state
         return false;
     }
 
-    {
-        uint8_t checksum = 0;
-        int i = 0;
-
-        while (i < (packet_length - 1)) {
-            checksum ^= packet[i];
-            i++;
-        }
-
-        if (checksum != packet[packet_length - 1]) {
-            return false;
-        }
+    if (calculate_checksum(packet, packet_length) != packet[packet_length - 1]) {
+        return false;
     }
 
-    desired_state_t parsed_state = {
-        .base = -1,
-        .shoulder = -1,
-        .forearm = -1,
-        .wrist = -1,
-        .gripper = -1
+    requested_state_t parsed_state = {
+        .base = { .active = false, .direction = 0 },
+        .shoulder = { .active = false, .direction = 0 },
+        .forearm = { .active = false, .direction = 0 },
+        .wrist = { .active = false, .direction = 0 },
+        .gripper = { .active = false, .direction = 0 }
     };
 
-    {
-        int index = 1;
-        int servo_index = 0;
+    int index = 1;
+    int servo_index = 0;
 
-        while (servo_index < 5) {
-            if (index >= (packet_length - 1)) {
-                return false;
-            }
-
-            if (packet[index] != expected_servo_order[servo_index]) {
-                return false;
-            }
-
-            index++;
-
-            if (index < (packet_length - 1)) {
-                if (packet[index] == 0x00 || packet[index] == 0x01) {
-                    if (servo_index == 0) {
-                        parsed_state.base = (int8_t)packet[index];
-                    }
-                    else if (servo_index == 1) {
-                        parsed_state.shoulder = (int8_t)packet[index];
-                    }
-                    else if (servo_index == 2) {
-                        parsed_state.forearm = (int8_t)packet[index];
-                    }
-                    else if (servo_index == 3) {
-                        parsed_state.wrist = (int8_t)packet[index];
-                    }
-                    else if (servo_index == 4) {
-                        parsed_state.gripper = (int8_t)packet[index];
-                    }
-
-                    index++;
-                }
-            }
-
-            servo_index++;
-        }
-
-        if (index != (packet_length - 1)) {
+    while (servo_index < 5) {
+        if (index >= (packet_length - 1)) {
             return false;
         }
+
+        if (packet[index] != expected_servo_order[servo_index]) {
+            return false;
+        }
+
+        index++;
+
+        if (index < (packet_length - 1)) {
+            if (packet[index] == 0x00 || packet[index] == 0x01) {
+                if (servo_index == 0) {
+                    parsed_state.base.active = true;
+                    parsed_state.base.direction = packet[index];
+                }
+                else if (servo_index == 1) {
+                    parsed_state.shoulder.active = true;
+                    parsed_state.shoulder.direction = packet[index];
+                }
+                else if (servo_index == 2) {
+                    parsed_state.forearm.active = true;
+                    parsed_state.forearm.direction = packet[index];
+                }
+                else if (servo_index == 3) {
+                    parsed_state.wrist.active = true;
+                    parsed_state.wrist.direction = packet[index];
+                }
+                else if (servo_index == 4) {
+                    parsed_state.gripper.active = true;
+                    parsed_state.gripper.direction = packet[index];
+                }
+
+                index++;
+            }
+        }
+
+        servo_index++;
     }
 
-    *desired_state_out = parsed_state;
+    if (index != (packet_length - 1)) {
+        return false;
+    }
+
+    *requested_state_out = parsed_state;
     return true;
+}
+
+static uint8_t calculate_checksum(const uint8_t *packet, int packet_length)
+{
+    uint8_t checksum = 0;
+    int i = 0;
+
+    while (i < (packet_length - 1)) {
+        checksum ^= packet[i];
+        i++;
+    }
+
+    return checksum;
 }

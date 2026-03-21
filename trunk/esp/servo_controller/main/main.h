@@ -56,19 +56,26 @@
 #define STATE_QUEUE_LENGTH 1
 #define CONTROL_ACK_QUEUE_LENGTH 1
 
+typedef struct {
+    bool active;
+    uint8_t direction;
+} servo_request_t;
 
 typedef struct {
-    int8_t base;
-    int8_t shoulder;
-    int8_t forearm;
-    int8_t wrist;
-    int8_t gripper;
-} desired_state_t;
+    servo_request_t base;
+    servo_request_t shoulder;
+    servo_request_t forearm;
+    servo_request_t wrist;
+    servo_request_t gripper;
+} requested_state_t;
+
+typedef struct {
+    uint8_t checksum;
+    bool accepted;
+} control_ack_t;
 
 typedef struct {
     volatile bool shutdown_requested;
-    volatile bool rx_valid;
-    volatile bool send_ack;
 } control_state_t;
 
 void usb_uart_init(void);
@@ -78,6 +85,7 @@ void servo_control_task(void *arg);
 void uart_rx_task(void *arg);
 
 extern control_state_t system_state;
-extern QueueHandle_t desired_state_queue;
+extern QueueHandle_t servo_command_q;
+extern QueueHandle_t control_ack_q;
 
 #endif
