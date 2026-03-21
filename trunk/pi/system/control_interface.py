@@ -1,4 +1,5 @@
 import time
+import select
 import serial
 
 from evdev import InputDevice, ecodes
@@ -6,16 +7,11 @@ from evdev import InputDevice, ecodes
 EVENT_PATH = "/dev/input/event11"
 REQUIRED_NAME = "Xbox Wireless Controller"
 
-# Analog inputs
 LT_CODE = ecodes.ABS_Z
 RT_CODE = ecodes.ABS_RZ
 LSX_CODE = ecodes.ABS_X
 RSX_CODE = ecodes.ABS_RX
-
-# D-pad left/right is usually ABS_HAT0X on Linux
 DPAD_X_CODE = ecodes.ABS_HAT0X
-
-# Bumpers
 LB_CODE = ecodes.BTN_TL
 RB_CODE = ecodes.BTN_TR
 
@@ -23,245 +19,252 @@ ESP_PORT = "/dev/ttyUSB0"
 ESP_BAUD = 115200
 
 SEND_HZ = 50
-SEND_DT = 1.0 / SEND_HZ
+SEND_DT = 1.0 / SEND_HZ                     #send every 20ms
 
-PI_TRIGGER_DEADBAND_0_1023 = 60
-PI_STICK_DEADBAND_SIGNED = 200
+START_BYTE = 0xAA                           #give the esp an expected start byte
+SERVO_ORDER = ("B", "S", "F", "W", "G")     #esp expects uart communication in this format
+NEUTRAL = None                              #if no button press, servo should not move
+
+TRIGGER_THRESHOLD = 80
+STICK_DEADBAND = 12000
 
 
 def clamp(v, lo, hi):
     if v < lo:
         return lo
+
     if v > hi:
         return hi
+
     return v
 
+def stick_direction(raw_value, center=0, deadband=STICK_DEADBAND):
+    distance_from_center = raw_value - center
 
-def normalize_to_0_1023(value, vmin, vmax):
-    value = clamp(value, vmin, vmax)
-
-    if vmax == vmin:
+    if distance_from_center < -deadband:
         return 0
 
-    scaled = int((value - vmin) * 1023 / (vmax - vmin))
-    return clamp(scaled, 0, 1023)
+    if distance_from_center > deadband:
+        return 1
 
+    return NEUTRAL
 
-def normalize_stick_to_signed_1023(value, vmin, vmax):
-    value = clamp(value, vmin, vmax)
+def dpad_direction(raw_value):
+    limited_value = clamp(int(raw_value), -1, 1)
 
-    if vmax == vmin:
+    if limited_value < 0:
         return 0
 
-    center = (vmin + vmax) / 2.0
-    span = (vmax - vmin) / 2.0
+    if limited_value > 0:
+        return 1
 
-    if span <= 0:
+    return NEUTRAL
+
+def trigger_direction(lt_value, rt_value, threshold=TRIGGER_THRESHOLD):
+    left_trigger_active = lt_value > threshold
+    right_trigger_active = rt_value > threshold
+
+    if left_trigger_active and not right_trigger_active:
         return 0
 
-    scaled = int(((value - center) * 1023.0) / span)
-    return clamp(scaled, -1023, 1023)
+    if right_trigger_active and not left_trigger_active:
+        return 1
 
+    return NEUTRAL
 
-def apply_signed_deadband(value, deadband):
-    if abs(value) <= deadband:
+def button_pair_direction(negative_pressed, positive_pressed):
+    if negative_pressed and not positive_pressed:
         return 0
-    return value
 
+    if positive_pressed and not negative_pressed:
+        return 1
 
-def build_active_commands(lt_0_1023, rt_0_1023, lsx_signed, rsx_signed, dpx_signed, lb_pressed, rb_pressed):
-    active = {}
+    return NEUTRAL
 
-    # Base from LSX
-    if lsx_signed < 0:
-        active["B"] = 0
-    elif lsx_signed > 0:
-        active["B"] = 1
+def build_commands(lt_value, rt_value, lsx_value, rsx_value, dpx_value, lb_pressed, rb_pressed):
+    raw_commands = {
+        "B": stick_direction(lsx_value),
+        "S": stick_direction(rsx_value),
+        "F": button_pair_direction(lb_pressed, rb_pressed),
+        "W": dpad_direction(dpx_value),
+        "G": trigger_direction(lt_value, rt_value)
+    }
 
-    # Shoulder from RSX
-    if rsx_signed < 0:
-        active["S"] = 0
-    elif rsx_signed > 0:
-        active["S"] = 1
+    return raw_commands
 
-    # Forearm from bumpers
-    if lb_pressed and not rb_pressed:
-        active["F"] = 0
-    elif rb_pressed and not lb_pressed:
-        active["F"] = 1
+def update_press_order(raw_commands, press_order):
+    inactive_servos = [servo_name for servo_name in press_order if raw_commands.get(servo_name) is None]
 
-    # Wrist from d-pad
-    if dpx_signed < 0:
-        active["W"] = 0
-    elif dpx_signed > 0:
-        active["W"] = 1
+    for servo_name in inactive_servos:
+        press_order.remove(servo_name)
 
-    # Gripper from triggers
-    if lt_0_1023 > 0 and rt_0_1023 == 0:
-        active["G"] = 0
-    elif rt_0_1023 > 0 and lt_0_1023 == 0:
-        active["G"] = 1
+    for servo_name in SERVO_ORDER:
+        if raw_commands[servo_name] is not None and servo_name not in press_order:
+            press_order.append(servo_name)
 
-    return active
+def choose_two_oldest(raw_commands, press_order):
+    chosen_commands = {}
 
+    for servo_name in press_order:
+        if raw_commands.get(servo_name) is not None:
+            chosen_commands[servo_name] = raw_commands[servo_name]
 
-def update_press_order(active_now, press_order):
-    keys_to_remove = [key for key in press_order if key not in active_now]
-    for key in keys_to_remove:
-        press_order.remove(key)
+            if len(chosen_commands) == 2:
+                break
 
-    for key in active_now:
-        if key not in press_order:
-            press_order.append(key)
+    return chosen_commands
 
+def build_full_state(chosen_commands):
+    full_state = {
+        "B": NEUTRAL,
+        "S": NEUTRAL,
+        "F": NEUTRAL,
+        "W": NEUTRAL,
+        "G": NEUTRAL
+    }
 
-def build_command_line(active_now, press_order):
-    chosen = []
+    for servo_name, servo_value in chosen_commands.items():
+        full_state[servo_name] = servo_value
 
-    for key in press_order:
-        if key in active_now:
-            chosen.append((key, active_now[key]))
-        if len(chosen) == 2:
-            break
+    return full_state
 
-    if len(chosen) == 0:
-        return None
+def build_packet(full_state):
+    packet_bytes = bytearray()
+    packet_bytes.append(START_BYTE)
 
-    if len(chosen) == 1:
-        key1, val1 = chosen[0]
-        key2, val2 = chosen[0]
-        return f"{key1}={val1},{key2}={val2}\n"
+    for servo_name in SERVO_ORDER:
+        packet_bytes.append(ord(servo_name))
 
-    key1, val1 = chosen[0]
-    key2, val2 = chosen[1]
-    return f"{key1}={val1},{key2}={val2}\n"
+        servo_value = full_state[servo_name]
+        if servo_value in (0, 1):
+            packet_bytes.append(servo_value)
+
+    checksum_value = 0
+
+    for packet_byte in packet_bytes:
+        checksum_value ^= packet_byte
+
+    packet_bytes.append(checksum_value)
+    return bytes(packet_bytes)
 
 
 def main():
-    dev = InputDevice(EVENT_PATH)
+    controller = InputDevice(EVENT_PATH)
 
-    if dev.name != REQUIRED_NAME:
+    if controller.name != REQUIRED_NAME:
         raise RuntimeError(
-            f"{EVENT_PATH} name mismatch. Expected '{REQUIRED_NAME}', got '{dev.name}'"
+            f"{EVENT_PATH} name mismatch. Expected '{REQUIRED_NAME}', got '{controller.name}'"
         )
 
-    lt_info = dev.absinfo(LT_CODE)
-    rt_info = dev.absinfo(RT_CODE)
-    lsx_info = dev.absinfo(LSX_CODE)
-    rsx_info = dev.absinfo(RSX_CODE)
+    serial_port = serial.Serial(ESP_PORT, ESP_BAUD, timeout=0.1)
 
-    lt_min, lt_max = lt_info.min, lt_info.max
-    rt_min, rt_max = rt_info.min, rt_info.max
-    lsx_min, lsx_max = lsx_info.min, lsx_info.max
-    rsx_min, rsx_max = rsx_info.min, rsx_info.max
+    print(f"Using controller: {EVENT_PATH} name='{controller.name}'")
+    print(f"Connected to ESP32 on {ESP_PORT} @baud {ESP_BAUD}")
 
-    ser = serial.Serial(ESP_PORT, ESP_BAUD, timeout=0.1)
-
-    print(f"Using controller: {EVENT_PATH} name='{dev.name}'")
-    print(f"LT   ABS_Z     range=({lt_min},{lt_max})")
-    print(f"RT   ABS_RZ    range=({rt_min},{rt_max})")
-    print(f"LSX  ABS_X     range=({lsx_min},{lsx_max})")
-    print(f"RSX  ABS_RX    range=({rsx_min},{rsx_max})")
-    print(f"DPX  ABS_HAT0X")
-    print(f"LB   BTN_TL")
-    print(f"RB   BTN_TR")
-    print(f"Connected to ESP32 on {ESP_PORT} @ {ESP_BAUD}")
-    print("Sending command format like: B=0,S=1")
-
-    lt_0_1023 = 0
-    rt_0_1023 = 0
-    lsx_signed = 0
-    rsx_signed = 0
-    dpx_signed = 0
+    lt_value = 0
+    rt_value = 0
+    lsx_value = 0
+    rsx_value = 0
+    dpx_value = 0
     lb_pressed = 0
     rb_pressed = 0
 
     press_order = []
-    last_send = 0.0
-    last_line_sent = None
+    last_packet_sent = None
+    next_send_time = time.time()
 
-    dev.grab()
+    controller.grab()
 
     try:
-        for event in dev.read_loop():
-            updated = False
+        while True:
+            current_time = time.time()
+            wait_timeout = next_send_time - current_time
 
-            if event.type == ecodes.EV_ABS:
-                if event.code == LT_CODE:
-                    lt_0_1023 = normalize_to_0_1023(event.value, lt_min, lt_max)
-                    if lt_0_1023 < PI_TRIGGER_DEADBAND_0_1023:
-                        lt_0_1023 = 0
-                    updated = True
+            if wait_timeout < 0:
+                wait_timeout = 0
 
-                elif event.code == RT_CODE:
-                    rt_0_1023 = normalize_to_0_1023(event.value, rt_min, rt_max)
-                    if rt_0_1023 < PI_TRIGGER_DEADBAND_0_1023:
-                        rt_0_1023 = 0
-                    updated = True
+            ready_to_read = select.select(
+                [controller.fd],
+                [],
+                [],
+                wait_timeout
+            )[0]
 
-                elif event.code == LSX_CODE:
-                    lsx_signed = normalize_stick_to_signed_1023(event.value, lsx_min, lsx_max)
-                    lsx_signed = apply_signed_deadband(lsx_signed, PI_STICK_DEADBAND_SIGNED)
-                    updated = True
+            if ready_to_read:
+                for event in controller.read():
+                    if event.type == ecodes.EV_ABS:
+                        if event.code == LT_CODE:
+                            lt_value = event.value
 
-                elif event.code == RSX_CODE:
-                    rsx_signed = normalize_stick_to_signed_1023(event.value, rsx_min, rsx_max)
-                    rsx_signed = apply_signed_deadband(rsx_signed, PI_STICK_DEADBAND_SIGNED)
-                    updated = True
+                        elif event.code == RT_CODE:
+                            rt_value = event.value
 
-                elif event.code == DPAD_X_CODE:
-                    dpx_signed = clamp(int(event.value), -1, 1)
-                    updated = True
+                        elif event.code == LSX_CODE:
+                            lsx_value = event.value
 
-            elif event.type == ecodes.EV_KEY:
-                if event.code == LB_CODE:
-                    lb_pressed = 1 if event.value else 0
-                    updated = True
+                        elif event.code == RSX_CODE:
+                            rsx_value = event.value
 
-                elif event.code == RB_CODE:
-                    rb_pressed = 1 if event.value else 0
-                    updated = True
+                        elif event.code == DPAD_X_CODE:
+                            dpx_value = event.value
 
-            now = time.time()
+                    elif event.type == ecodes.EV_KEY:
+                        if event.code == LB_CODE:
+                            lb_pressed = 1 if event.value else 0
 
-            if updated and (now - last_send >= SEND_DT):
-                active_now = build_active_commands(
-                    lt_0_1023,
-                    rt_0_1023,
-                    lsx_signed,
-                    rsx_signed,
-                    dpx_signed,
+                        elif event.code == RB_CODE:
+                            rb_pressed = 1 if event.value else 0
+
+            current_time = time.time()
+
+            if current_time >= next_send_time:
+                raw_commands = build_commands(
+                    lt_value,
+                    rt_value,
+                    lsx_value,
+                    rsx_value,
+                    dpx_value,
                     lb_pressed,
                     rb_pressed
                 )
 
-                update_press_order(active_now, press_order)
-                line = build_command_line(active_now, press_order)
+                update_press_order(raw_commands, press_order)
+                chosen_commands = choose_two_oldest(raw_commands, press_order)
+                full_state = build_full_state(chosen_commands)
+                packet = build_packet(full_state)
 
-                if line is not None and line != last_line_sent:
-                    ser.write(line.encode())
-                    ser.flush()
-                    last_line_sent = line
+                if packet != last_packet_sent:
+                    serial_port.write(packet)
+                    serial_port.flush()
+                    last_packet_sent = packet
 
-                if line is None:
-                    last_line_sent = None
-
-                last_send = now
+                while next_send_time <= current_time:
+                    next_send_time += SEND_DT
 
     except KeyboardInterrupt:
-        print("\nKeyboardInterrupt received. Sending SHUTDOWN...")
-        ser.write(b"SHUTDOWN\n")
-        ser.flush()
-        time.sleep(0.25)
+        neutral_state = {
+            "B": NEUTRAL,
+            "S": NEUTRAL,
+            "F": NEUTRAL,
+            "W": NEUTRAL,
+            "G": NEUTRAL
+        }
+
+        neutral_packet = build_packet(neutral_state)
+
+        for _ in range(3):
+            serial_port.write(neutral_packet)   #will be a shutdown command later
+            serial_port.flush()
+            time.sleep(0.02)
 
     finally:
         try:
-            dev.ungrab()
+            controller.ungrab()
         except Exception:
             pass
 
         try:
-            ser.close()
+            serial_port.close()
         except Exception:
             pass
 

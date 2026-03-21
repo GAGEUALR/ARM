@@ -64,6 +64,10 @@ void servo_init(void);
 void servo_control_task(void *arg);
 void uart_rx_task(void *arg);
 
+//RTOS queue definitions
+QueueHandle_t servo_and_position;
+QueueHandle_t control_ack;
+
 
 typedef struct {
     volatile bool shutdown_requested;

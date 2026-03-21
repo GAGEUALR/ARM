@@ -11,6 +11,7 @@ control_state_t system_state = {
 
 void app_main(void)
 {
+    
     usb_uart_init();
     servo_init();
 
