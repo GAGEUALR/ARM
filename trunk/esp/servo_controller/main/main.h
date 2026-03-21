@@ -4,14 +4,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
-
+#include "freertos/queue.h"
 
 #include "driver/ledc.h"
 #include "driver/uart.h"
@@ -55,27 +53,31 @@
 #define USB_UART_BAUD 115200
 #define UART_RX_BUF_SIZE 1024
 
-#define COMMAND_BUFFER_SIZE 64
+#define STATE_QUEUE_LENGTH 1
+#define CONTROL_ACK_QUEUE_LENGTH 1
 
-//function declarations
+
+typedef struct {
+    int8_t base;
+    int8_t shoulder;
+    int8_t forearm;
+    int8_t wrist;
+    int8_t gripper;
+} desired_state_t;
+
+typedef struct {
+    volatile bool shutdown_requested;
+    volatile bool rx_valid;
+    volatile bool send_ack;
+} control_state_t;
+
 void usb_uart_init(void);
 void servo_init(void);
 
 void servo_control_task(void *arg);
 void uart_rx_task(void *arg);
 
-//RTOS queue definitions
-QueueHandle_t servo_and_position;
-QueueHandle_t control_ack;
-
-
-typedef struct {
-    volatile bool shutdown_requested;
-    volatile char command[COMMAND_BUFFER_SIZE];
-    volatile bool rx_valid;
-    volatile bool send_ack;
-} control_state_t;
-
 extern control_state_t system_state;
+extern QueueHandle_t desired_state_queue;
 
 #endif

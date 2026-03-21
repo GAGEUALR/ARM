@@ -247,9 +247,7 @@ static bool decode_command(char *cmd)
     return true;
 }
 
-static int parse_command_line(const char *line,
-    char key1_out[5], int *value1_out,
-    char key2_out[5], int *value2_out)
+static int parse_command_line(const char *line, char key1_out[5], int *value1_out, char key2_out[5], int *value2_out)
 {
     line = skip_spaces(line);
 
