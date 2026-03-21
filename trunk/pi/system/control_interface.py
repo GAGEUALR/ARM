@@ -171,13 +171,13 @@ def main():
 
     press_order = []
     last_packet_sent = None
-    next_send_time = time.time()
+    next_send_time = time.monotonic()
 
     controller.grab()
 
     try:
         while True:
-            current_time = time.time()
+            current_time = time.monotonic()
             wait_timeout = next_send_time - current_time
 
             if wait_timeout < 0:
@@ -215,7 +215,7 @@ def main():
                         elif event.code == RB_CODE:
                             rb_pressed = 1 if event.value else 0
 
-            current_time = time.time()
+            current_time = time.monotonic()
 
             if current_time >= next_send_time:
                 raw_commands = build_commands(
