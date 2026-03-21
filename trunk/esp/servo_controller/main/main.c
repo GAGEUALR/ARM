@@ -97,6 +97,14 @@ static void usb_uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(USB_UART_NUM, &cfg));
 }
 
+static const char *skip_spaces(const char *s)
+{
+    while (*s && isspace((unsigned char)*s)) {
+        s++;
+    }
+    return s;
+}
+
 static void uart_rx_task(void *arg)
 {
     (void)arg;
@@ -120,13 +128,20 @@ static void uart_rx_task(void *arg)
 
                 if (strcmp(line, "SHUTDOWN") == 0) {
                     system_state.shutdown_requested = true;
-                } else {
-                    strncpy(system_state.command, line, COMMAND_BUFFER_SIZE - 1);
-                    system_state.command[COMMAND_BUFFER_SIZE - 1] = '\0';
+                    system_state.rx_valid = true;
+                    system_state.send_ack = true;
                 }
+                else {
+                    int i = 0;
+                    while (i < (COMMAND_BUFFER_SIZE - 1) && line[i] != '\0') {
+                        system_state.command[i] = line[i];
+                        i++;
+                    }
+                    system_state.command[i] = '\0';
 
-                system_state.rx_valid = true;
-                system_state.send_ack = true;
+                    system_state.rx_valid = true;
+                    system_state.send_ack = true;
+                }
 
                 taskEXIT_CRITICAL(&mux);
             }
@@ -137,11 +152,97 @@ static void uart_rx_task(void *arg)
 
         if (idx < (int)sizeof(line) - 1) {
             line[idx++] = (char)ch;
+        } else {
+            idx = 0;
         }
     }
 }
 
-static void decode_command(char *cmd)
+static int parse_command_line(const char *line,
+    char key1_out[5], int *value1_out,
+    char key2_out[5], int *value2_out)
+{
+    line = skip_spaces(line);
+
+    const char *equals1 = strchr(line, '=');
+    const char *comma   = strchr(line, ',');
+    const char *equals2 = NULL;
+
+    if (equals1 == NULL || comma == NULL || equals1 > comma) {
+        return 0;
+    }
+
+    equals2 = strchr(comma + 1, '=');
+    if (equals2 == NULL) {
+        return 0;
+    }
+
+    int key1_len = (int)(equals1 - line);
+    while (key1_len > 0 && isspace((unsigned char)line[key1_len - 1])) {
+        key1_len--;
+    }
+
+    if (key1_len < 1 || key1_len > 4) {
+        return 0;
+    }
+
+    for (int i = 0; i < key1_len; i++) {
+        key1_out[i] = (char)toupper((unsigned char)line[i]);
+    }
+    key1_out[key1_len] = '\0';
+
+    const char *value1_start = skip_spaces(equals1 + 1);
+    char *end1 = NULL;
+    long value1 = strtol(value1_start, &end1, 10);
+
+    if (end1 == value1_start) {
+        return 0;
+    }
+
+    while (*end1 && isspace((unsigned char)*end1)) {
+        end1++;
+    }
+
+    if (end1 != comma) {
+        return 0;
+    }
+
+    const char *key2_start = skip_spaces(comma + 1);
+    int key2_len = (int)(equals2 - key2_start);
+
+    while (key2_len > 0 && isspace((unsigned char)key2_start[key2_len - 1])) {
+        key2_len--;
+    }
+
+    if (key2_len < 1 || key2_len > 4) {
+        return 0;
+    }
+
+    for (int i = 0; i < key2_len; i++) {
+        key2_out[i] = (char)toupper((unsigned char)key2_start[i]);
+    }
+    key2_out[key2_len] = '\0';
+
+    const char *value2_start = skip_spaces(equals2 + 1);
+    char *end2 = NULL;
+    long value2 = strtol(value2_start, &end2, 10);
+
+    if (end2 == value2_start) {
+        return 0;
+    }
+
+    end2 = (char *)skip_spaces(end2);
+    if (*end2 != '\0') {
+        return 0;
+    }
+
+    *value1_out = (int)value1;
+    *value2_out = (int)value2;
+
+    return 1;
+}
+
+static bool decode_command(char *cmd)
 {
     char key1[5] = {0};
     char key2[5] = {0};
@@ -149,69 +250,82 @@ static void decode_command(char *cmd)
     int val2 = 0;
 
     if (!parse_command_line(cmd, key1, &val1, key2, &val2)) {
-        return;
+        return false;
     }
 
-    // ----- FIRST COMMAND -----
     if (strcmp(key1, "B") == 0) {
-        // BASE
         if (val1 == 0) {
-            // left
+            // BASE LEFT
         } else if (val1 == 1) {
-            // right
+            // BASE RIGHT
         }
     }
     else if (strcmp(key1, "S") == 0) {
-        // SHOULDER
         if (val1 == 0) {
+            // SHOULDER LEFT
         } else if (val1 == 1) {
+            // SHOULDER RIGHT
         }
     }
     else if (strcmp(key1, "F") == 0) {
-        // FOREARM
         if (val1 == 0) {
+            // FOREARM LEFT
         } else if (val1 == 1) {
+            // FOREARM RIGHT
         }
     }
     else if (strcmp(key1, "W") == 0) {
-        // WRIST
         if (val1 == 0) {
+            // WRIST LEFT
         } else if (val1 == 1) {
+            // WRIST RIGHT
         }
     }
     else if (strcmp(key1, "G") == 0) {
-        // GRIPPER
         if (val1 == 0) {
+            // GRIPPER LEFT
         } else if (val1 == 1) {
+            // GRIPPER RIGHT
         }
     }
 
-    // ----- SECOND COMMAND -----
     if (strcmp(key2, "B") == 0) {
         if (val2 == 0) {
+            // BASE LEFT
         } else if (val2 == 1) {
+            // BASE RIGHT
         }
     }
     else if (strcmp(key2, "S") == 0) {
         if (val2 == 0) {
+            // SHOULDER LEFT
         } else if (val2 == 1) {
+            // SHOULDER RIGHT
         }
     }
     else if (strcmp(key2, "F") == 0) {
         if (val2 == 0) {
+            // FOREARM LEFT
         } else if (val2 == 1) {
+            // FOREARM RIGHT
         }
     }
     else if (strcmp(key2, "W") == 0) {
         if (val2 == 0) {
+            // WRIST LEFT
         } else if (val2 == 1) {
+            // WRIST RIGHT
         }
     }
     else if (strcmp(key2, "G") == 0) {
         if (val2 == 0) {
+            // GRIPPER LEFT
         } else if (val2 == 1) {
+            // GRIPPER RIGHT
         }
     }
+
+    return true;
 }
 
 static void servo_control_task(void *arg)
@@ -220,18 +334,14 @@ static void servo_control_task(void *arg)
 
     bool startup_active = true;
 
-    // one-time startup position
     servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
     servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
     servo_write_us(FOREARM_CHANNEL, SERVO_US_CENTER);
     servo_write_us(WRIST_CHANNEL, SERVO_US_CENTER);
     servo_write_us(GRIPPER_CHANNEL, SERVO_US_CENTER);
 
-    char local_cmd[COMMAND_BUFFER_SIZE];
-
     while (1) {
 
-        // shutdown
         if (system_state.shutdown_requested) {
             servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
             servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
@@ -243,28 +353,64 @@ static void servo_control_task(void *arg)
             continue;
         }
 
-        // startup hold
         if (startup_active) {
+
+            servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
+            servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
+            servo_write_us(FOREARM_CHANNEL, SERVO_US_CENTER);
+            servo_write_us(WRIST_CHANNEL, SERVO_US_CENTER);
+            servo_write_us(GRIPPER_CHANNEL, SERVO_US_CENTER);
+
             if (system_state.rx_valid) {
-                startup_active = false;
+                char local_cmd[COMMAND_BUFFER_SIZE];
+                int i = 0;
+                bool valid = false;
+
+                taskENTER_CRITICAL(&mux);
+
+                while (i < (COMMAND_BUFFER_SIZE - 1) && system_state.command[i] != '\0') {
+                    local_cmd[i] = (char)system_state.command[i];
+                    i++;
+                }
+                local_cmd[i] = '\0';
+                system_state.rx_valid = false;
+
+                taskEXIT_CRITICAL(&mux);
+
+                valid = decode_command(local_cmd);
+
+                if (valid) {
+                    startup_active = false;
+                }
+
+                if (system_state.send_ack) {
+                    uart_write_bytes(USB_UART_NUM, "OK\n", 3);
+                    system_state.send_ack = false;
+                }
             }
+
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
 
-        // safe read
         if (system_state.rx_valid) {
+
+            char local_cmd[COMMAND_BUFFER_SIZE];
+            int i = 0;
 
             taskENTER_CRITICAL(&mux);
 
-            strncpy(local_cmd, system_state.command, COMMAND_BUFFER_SIZE);
+            while (i < (COMMAND_BUFFER_SIZE - 1) && system_state.command[i] != '\0') {
+                local_cmd[i] = (char)system_state.command[i];
+                i++;
+            }
+            local_cmd[i] = '\0';
             system_state.rx_valid = false;
 
             taskEXIT_CRITICAL(&mux);
 
             decode_command(local_cmd);
 
-            // send ACK
             if (system_state.send_ack) {
                 uart_write_bytes(USB_UART_NUM, "OK\n", 3);
                 system_state.send_ack = false;

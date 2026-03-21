@@ -1,5 +1,12 @@
-#include <stdio.h>
-#include <string.h>
+#ifndef MAIN_H
+#define MAIN_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "driver/uart.h"
 
 #define BASE_GPIO GPIO_NUM_4
 #define FOREARM_GPIO GPIO_NUM_16
@@ -30,12 +37,15 @@
 #define WRIST_MAX_STEP_US_PER_TICK 14
 #define GRIPPER_MAX_STEP_US_PER_TICK 18
 
+#define SERVO_ACCEL_STEP_US_PER_TICK 1
+#define SERVO_DECEL_STEP_US_PER_TICK 2
+#define SERVO_TARGET_TOLERANCE_US 2
+
 #define USB_UART_NUM UART_NUM_0
 #define USB_UART_BAUD 115200
 #define UART_RX_BUF_SIZE 1024
 
-#define MAX_ACTIVE_SERVOS_PER_TICK 2
-#define COMMAND_BUFFER_SIZE 25
+#define COMMAND_BUFFER_SIZE 64
 
 typedef struct {
     volatile bool shutdown_requested;
@@ -49,3 +59,5 @@ static control_state_t system_state = {
     .rx_valid = false,
     .send_ack = false,
 };
+
+#endif
