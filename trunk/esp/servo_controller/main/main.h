@@ -1,12 +1,22 @@
 #ifndef MAIN_H
 #define MAIN_H
 
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+
+
 #include "driver/ledc.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
+#include "esp_err.h"
 
 #define BASE_GPIO GPIO_NUM_4
 #define FOREARM_GPIO GPIO_NUM_16
@@ -47,6 +57,11 @@
 
 #define COMMAND_BUFFER_SIZE 64
 
+//function declarations
+void servo_control_task(void *arg);
+void uart_rx_task(void *arg);
+
+
 typedef struct {
     volatile bool shutdown_requested;
     volatile char command[COMMAND_BUFFER_SIZE];
@@ -54,10 +69,6 @@ typedef struct {
     volatile bool send_ack;
 } control_state_t;
 
-static control_state_t system_state = {
-    .shutdown_requested = false,
-    .rx_valid = false,
-    .send_ack = false,
-};
+extern control_state_t system_state;
 
 #endif
