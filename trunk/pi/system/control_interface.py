@@ -69,15 +69,72 @@ def apply_signed_deadband(value, deadband):
     return value
 
 
-def send_zero_commands(ser):
-    ser.write(b"LT=0\n")
-    ser.write(b"RT=0\n")
-    ser.write(b"LSX=0\n")
-    ser.write(b"RSX=0\n")
-    ser.write(b"LB=0\n")
-    ser.write(b"RB=0\n")
-    ser.write(b"DPX=0\n")
-    ser.flush()
+def build_active_commands(lt_0_1023, rt_0_1023, lsx_signed, rsx_signed, dpx_signed, lb_pressed, rb_pressed):
+    active = {}
+
+    # Base from LSX
+    if lsx_signed < 0:
+        active["B"] = 0
+    elif lsx_signed > 0:
+        active["B"] = 1
+
+    # Shoulder from RSX
+    if rsx_signed < 0:
+        active["S"] = 0
+    elif rsx_signed > 0:
+        active["S"] = 1
+
+    # Forearm from bumpers
+    if lb_pressed and not rb_pressed:
+        active["F"] = 0
+    elif rb_pressed and not lb_pressed:
+        active["F"] = 1
+
+    # Wrist from d-pad
+    if dpx_signed < 0:
+        active["W"] = 0
+    elif dpx_signed > 0:
+        active["W"] = 1
+
+    # Gripper from triggers
+    if lt_0_1023 > 0 and rt_0_1023 == 0:
+        active["G"] = 0
+    elif rt_0_1023 > 0 and lt_0_1023 == 0:
+        active["G"] = 1
+
+    return active
+
+
+def update_press_order(active_now, press_order):
+    keys_to_remove = [key for key in press_order if key not in active_now]
+    for key in keys_to_remove:
+        press_order.remove(key)
+
+    for key in active_now:
+        if key not in press_order:
+            press_order.append(key)
+
+
+def build_command_line(active_now, press_order):
+    chosen = []
+
+    for key in press_order:
+        if key in active_now:
+            chosen.append((key, active_now[key]))
+        if len(chosen) == 2:
+            break
+
+    if len(chosen) == 0:
+        return None
+
+    if len(chosen) == 1:
+        key1, val1 = chosen[0]
+        key2, val2 = chosen[0]
+        return f"{key1}={val1},{key2}={val2}\n"
+
+    key1, val1 = chosen[0]
+    key2, val2 = chosen[1]
+    return f"{key1}={val1},{key2}={val2}\n"
 
 
 def main():
@@ -109,6 +166,7 @@ def main():
     print(f"LB   BTN_TL")
     print(f"RB   BTN_TR")
     print(f"Connected to ESP32 on {ESP_PORT} @ {ESP_BAUD}")
+    print("Sending command format like: B=0,S=1")
 
     lt_0_1023 = 0
     rt_0_1023 = 0
@@ -118,14 +176,9 @@ def main():
     lb_pressed = 0
     rb_pressed = 0
 
+    press_order = []
     last_send = 0.0
-    last_lt_sent = None
-    last_rt_sent = None
-    last_lsx_sent = None
-    last_rsx_sent = None
-    last_dpx_sent = None
-    last_lb_sent = None
-    last_rb_sent = None
+    last_line_sent = None
 
     dev.grab()
 
@@ -157,7 +210,6 @@ def main():
                     updated = True
 
                 elif event.code == DPAD_X_CODE:
-                    # Linux typically reports -1 = left, 0 = released, 1 = right
                     dpx_signed = clamp(int(event.value), -1, 1)
                     updated = True
 
@@ -173,39 +225,33 @@ def main():
             now = time.time()
 
             if updated and (now - last_send >= SEND_DT):
-                if lt_0_1023 != last_lt_sent:
-                    ser.write(f"LT={lt_0_1023}\n".encode())
-                    last_lt_sent = lt_0_1023
+                active_now = build_active_commands(
+                    lt_0_1023,
+                    rt_0_1023,
+                    lsx_signed,
+                    rsx_signed,
+                    dpx_signed,
+                    lb_pressed,
+                    rb_pressed
+                )
 
-                if rt_0_1023 != last_rt_sent:
-                    ser.write(f"RT={rt_0_1023}\n".encode())
-                    last_rt_sent = rt_0_1023
+                update_press_order(active_now, press_order)
+                line = build_command_line(active_now, press_order)
 
-                if lsx_signed != last_lsx_sent:
-                    ser.write(f"LSX={lsx_signed}\n".encode())
-                    last_lsx_sent = lsx_signed
+                if line is not None and line != last_line_sent:
+                    ser.write(line.encode())
+                    ser.flush()
+                    last_line_sent = line
 
-                if rsx_signed != last_rsx_sent:
-                    ser.write(f"RSX={rsx_signed}\n".encode())
-                    last_rsx_sent = rsx_signed
-
-                if dpx_signed != last_dpx_sent:
-                    ser.write(f"DPX={dpx_signed}\n".encode())
-                    last_dpx_sent = dpx_signed
-
-                if lb_pressed != last_lb_sent:
-                    ser.write(f"LB={lb_pressed}\n".encode())
-                    last_lb_sent = lb_pressed
-
-                if rb_pressed != last_rb_sent:
-                    ser.write(f"RB={rb_pressed}\n".encode())
-                    last_rb_sent = rb_pressed
+                if line is None:
+                    last_line_sent = None
 
                 last_send = now
 
     except KeyboardInterrupt:
-        print("\nKeyboardInterrupt received. Sending zero commands...")
-        send_zero_commands(ser)
+        print("\nKeyboardInterrupt received. Sending SHUTDOWN...")
+        ser.write(b"SHUTDOWN\n")
+        ser.flush()
         time.sleep(0.25)
 
     finally:
