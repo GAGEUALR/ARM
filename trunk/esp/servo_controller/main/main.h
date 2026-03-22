@@ -54,27 +54,28 @@
 #define UART_RX_BUF_SIZE 1024
 
 #define STATE_QUEUE_LENGTH 1
-#define CONTROL_ACK_QUEUE_LENGTH 1
 
-extern uint8_t calculate_checksum(const uint8_t *packet, int packet_length);
+typedef enum {
+    accellerating,
+    decellerating,
+    at_max_speed,
+    at_target
+} control_status;
 
 typedef struct {
     bool active;
     uint8_t direction;
-} servo_request_t;
+    control_status status;
+} servo_state_t;
 
 typedef struct {
-    servo_request_t base;
-    servo_request_t shoulder;
-    servo_request_t forearm;
-    servo_request_t wrist;
-    servo_request_t gripper;
-} requested_state_t;
+    servo_state_t base;
+    servo_state_t shoulder;
+    servo_state_t forearm;
+    servo_state_t wrist;
+    servo_state_t gripper;
 
-typedef struct {
-    uint8_t checksum;
-    bool accepted;
-} control_ack_t;
+} system_state_t;
 
 typedef struct {
     volatile bool shutdown_requested;
@@ -88,6 +89,5 @@ void uart_rx_task(void *arg);
 
 extern control_state_t system_state;
 extern QueueHandle_t servo_command_q;
-extern QueueHandle_t control_ack_q;
 
 #endif

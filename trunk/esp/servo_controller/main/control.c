@@ -1,29 +1,55 @@
 #include "main.h"
+#include "control.h"
 
-static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us);
-static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi);
-static inline uint32_t servo_us_to_duty(uint32_t pulse_us);
-static void configure_servo_channel(gpio_num_t gpio, ledc_channel_t channel);
+
+
 
 void servo_control_task(void *arg)
 {
     (void)arg;
 
-    servo_init();
+    //build system state 
+    
+
+    control_startup();
 
     while(1){
 
-    requested_state_t received_state;
+    system_state_t received_state;
 
-    xQueueReceive(servo_command_q, &received_state, 0);
+    if (xQueueReceive(servo_command_q, &received_state, 0) == pdTRUE){
 
-    uint8_t cs_from_uart = calculate_checksum((const uint8_t *)&received_state, sizeof(received_state));
+        //we can only receive two commands at a time from the pi, so we don't need
+        //to worry about writing too many servos at once. 
 
-    xQueueOverwrite(control_ack_q, &cs_from_uart);
+        //send pulse on clk
 
-
+        //I need a 10ms clock source to update the servo pwm. 
+    }
     }
 }
+
+static void control_startup(void)
+{
+
+    //this is a good place for closed-loop control instead of delays
+    servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    servo_write_us(FOREARM_CHANNEL, SERVO_US_CENTER);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    servo_write_us(WRIST_CHANNEL, SERVO_US_CENTER);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    servo_write_us(GRIPPER_CHANNEL, SERVO_US_CENTER);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+}
+
 
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 {
