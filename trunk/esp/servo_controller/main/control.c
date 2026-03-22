@@ -1,59 +1,232 @@
 #include "main.h"
 #include "control.h"
 
+static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us);
+static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi);
+static inline uint32_t servo_us_to_duty(uint32_t pulse_us);
+static void configure_servo_channel(gpio_num_t gpio, ledc_channel_t channel);
+static void control_startup(void);
+static void center_all_servos(void);
+static void update_control_state_from_request(
+    servo_state_t *control_servo,
+    const servo_request_t *requested_servo
+);
+static void apply_control_state(
+    servo_state_t *control_servo,
+    int32_t *current_step_us,
+    uint32_t max_step_us,
+    const servo_request_t *requested_servo
+);
 
 
 
-void servo_control_task(void *arg)
-{
+
+system_t system_state = {0};
+
+static const ledc_channel_t servo_channels[SERVO_COUNT] = {
+    BASE_CHANNEL,
+    SHOULDER_CHANNEL,
+    FOREARM_CHANNEL,
+    WRIST_CHANNEL,
+    GRIPPER_CHANNEL
+};
+
+static const gpio_num_t servo_gpios[SERVO_COUNT] = {
+    BASE_GPIO,
+    SHOULDER_GPIO,
+    FOREARM_GPIO,
+    WRIST_GPIO,
+    GRIPPER_GPIO
+};
+
+static const uint32_t servo_max_step_us[SERVO_COUNT] = {
+    BASE_MAX_STEP_US_PER_TICK,
+    SHOULDER_MAX_STEP_US_PER_TICK,
+    FOREARM_MAX_STEP_US_PER_TICK,
+    WRIST_MAX_STEP_US_PER_TICK,
+    GRIPPER_MAX_STEP_US_PER_TICK
+};
+
+static int32_t servo_step_us[SERVO_COUNT] = { 0 };
+
+void servo_control_task(void *arg){
     (void)arg;
 
-    //build system state 
-    
     control_startup();
 
-    while(1){
+    requested_state_t requested_state = {0};
 
-    control_state_t received_state;
+    while (!system_state.shutdown_requested) {
+        requested_state_t received_state;
 
-    if (xQueueReceive(servo_command_q, &received_state, 0) == pdTRUE){
+        int i;
 
-        //we can only receive two commands at a time from the pi, so we don't need
-        //to worry about writing too many servos at once.
-        
+        if (xQueueReceive(servo_command_q, &received_state, pdMS_TO_TICKS(10)) == pdTRUE) {
+            requested_state = received_state;
+        }
 
-        //this is a start..it's a bit long
-        if (system_state.control_state.base.state.active != received_state.base.state.active){
-            ~system_state.control_state.base.state.active;}
+        for (i = 0; i < SERVO_COUNT; i++) {
+            update_control_state_from_request(
+                &system_state.control_state.servos[i],
+                &requested_state.servos[i]
+            );
 
-        //send pulse on clk
+            apply_control_state(
+                &system_state.control_state.servos[i],
+                &servo_step_us[i],
+                servo_max_step_us[i],
+                &requested_state.servos[i]
+            );
 
-        //I need a 10ms clock source to update the servo pwm. 
+            servo_write_us(
+                servo_channels[i],
+                system_state.control_state.servos[i].current_pulse_us
+            );
+        }
     }
+            
+    //once shutdown is requested:
+    center_all_servos();
+
+    system_state.uart_state.uart_ready = false;
+
+
+}
+
+static void update_control_state_from_request(servo_state_t *control_servo, const servo_request_t *requested_servo)
+{
+    if (!requested_servo->active) {
+        if (control_servo->active) {
+            control_servo->status = decellerating;
+        }
+        return;
+    }
+
+    if (!control_servo->active) {
+        control_servo->active = true;
+        control_servo->direction = requested_servo->direction;
+        control_servo->status = accellerating;
+        return;
+    }
+
+    if (control_servo->direction != requested_servo->direction) {
+        control_servo->status = decellerating;
+        return;
+    }
+
+    if (control_servo->status == at_target) {
+        control_servo->status = accellerating;
+    }
+}
+
+static void apply_control_state( servo_state_t *control_servo, int32_t *current_step_us, uint32_t max_step_us, const servo_request_t *requested_servo)
+{
+    if (control_servo->status == decellerating) {
+        if (*current_step_us > 0) {
+            *current_step_us -= SERVO_DECEL_STEP_US_PER_TICK;
+            if (*current_step_us < 0) {
+                *current_step_us = 0;
+            }
+        }
+
+        if (*current_step_us == 0) {
+            if (!requested_servo->active) {
+                control_servo->active = false;
+                control_servo->status = at_target;
+            }
+            else if (control_servo->direction != requested_servo->direction) {
+                control_servo->direction = requested_servo->direction;
+                control_servo->active = true;
+                control_servo->status = accellerating;
+            }
+            else {
+                control_servo->status = at_target;
+            }
+        }
+    }
+    else if (control_servo->status == accellerating) {
+        control_servo->active = true;
+
+        if (*current_step_us < (int32_t)max_step_us) {
+            *current_step_us += SERVO_ACCEL_STEP_US_PER_TICK;
+            if (*current_step_us > (int32_t)max_step_us) {
+                *current_step_us = (int32_t)max_step_us;
+            }
+        }
+
+        if (*current_step_us >= (int32_t)max_step_us) {
+            control_servo->status = at_max_speed;
+        }
+    }
+    else if (control_servo->status == at_max_speed) {
+        control_servo->active = true;
+        *current_step_us = (int32_t)max_step_us;
+    }
+    else {
+        *current_step_us = 0;
+    }
+
+    if (*current_step_us > 0) {
+        if (control_servo->direction) {
+            if (control_servo->current_pulse_us < SERVO_US_MAX_SAFE) {
+                control_servo->current_pulse_us += (uint32_t)(*current_step_us);
+                if (control_servo->current_pulse_us > SERVO_US_MAX_SAFE) {
+                    control_servo->current_pulse_us = SERVO_US_MAX_SAFE;
+                }
+            }
+        }
+        else {
+            uint32_t step_u32 = (uint32_t)(*current_step_us);
+
+            if (control_servo->current_pulse_us > SERVO_US_MIN_SAFE + step_u32) {
+                control_servo->current_pulse_us -= step_u32;
+            }
+            else {
+                control_servo->current_pulse_us = SERVO_US_MIN_SAFE;
+            }
+        }
+    }
+
+    if (control_servo->current_pulse_us == SERVO_US_MIN_SAFE ||
+        control_servo->current_pulse_us == SERVO_US_MAX_SAFE) {
+        *current_step_us = 0;
+        control_servo->status = at_target;
     }
 }
 
 static void control_startup(void)
 {
+    int i;
 
-    //this is a good place for closed-loop control instead of delays
-    servo_write_us(BASE_CHANNEL, SERVO_US_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(500));
+    system_state.shutdown_requested = false;
+    system_state.uart_state.uart_ready = false;
 
-    servo_write_us(SHOULDER_CHANNEL, SERVO_US_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(500));
+    for (i = 0; i < SERVO_COUNT; i++) {
+        system_state.control_state.servos[i].active = false;
+        system_state.control_state.servos[i].direction = false;
+        system_state.control_state.servos[i].status = at_target;
+        system_state.control_state.servos[i].current_pulse_us = SERVO_US_CENTER;//change once a good resting position is found
+        servo_step_us[i] = 0;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 
-    servo_write_us(FOREARM_CHANNEL, SERVO_US_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(500));
-
-    servo_write_us(WRIST_CHANNEL, SERVO_US_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(500));
-
-    servo_write_us(GRIPPER_CHANNEL, SERVO_US_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(500));
-
+    center_all_servos();
 }
 
+static void center_all_servos(void)
+{
+    int i;
+
+    for (i = 0; i < SERVO_COUNT; i++) {
+        system_state.control_state.servos[i].active = false;
+        system_state.control_state.servos[i].direction = false;
+        system_state.control_state.servos[i].status = at_target;
+        system_state.control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
+        servo_step_us[i] = 0;
+
+        servo_write_us(servo_channels[i], SERVO_US_CENTER);
+    }
+}
 
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 {
@@ -110,10 +283,9 @@ static inline uint32_t servo_us_to_duty(uint32_t pulse_us)
     return (pulse_us * duty_max) / SERVO_PERIOD_US;
 }
 
-static inline uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
+static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
 }
-

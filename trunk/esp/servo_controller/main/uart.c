@@ -4,7 +4,7 @@
 #define UART_PACKET_MIN_SIZE 7
 #define UART_PACKET_MAX_SIZE 12
 
-static bool parse_packet(const uint8_t *packet, int packet_length, control_state_t *requested_state_out);
+static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out);
 static uint8_t calculate_checksum(const uint8_t *packet, int packet_length);
 
 void uart_rx_task(void *arg)
@@ -34,7 +34,6 @@ void uart_rx_task(void *arg)
                 packet_index = 1;
                 receiving_packet = true;
             }
-
             continue;
         }
 
@@ -56,7 +55,7 @@ void uart_rx_task(void *arg)
         }
 
         if (packet_index >= UART_PACKET_MIN_SIZE) {
-            control_state_t requested_state;
+            requested_state_t requested_state;
 
             if (parse_packet(packet, packet_index, &requested_state)) {
                 xQueueOverwrite(servo_command_q, &requested_state);
@@ -91,9 +90,8 @@ void usb_uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(USB_UART_NUM, &cfg));
 }
 
-static bool parse_packet(const uint8_t *packet, int packet_length, control_state_t *requested_state_out)
-{
-    static const uint8_t expected_servo_order[5] = { 'B', 'S', 'F', 'W', 'G' };
+static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out){
+    static const uint8_t expected_servo_order[SERVO_COUNT] = { 'B', 'S', 'F', 'W', 'G' };
 
     if (packet == NULL || requested_state_out == NULL) {
         return false;
@@ -111,63 +109,43 @@ static bool parse_packet(const uint8_t *packet, int packet_length, control_state
         return false;
     }
 
-    control_state_t parsed_state = {
-        .base.state = { .active = false, .direction = false },
-        .shoulder.state = { .active = false, .direction = false },
-        .forearm.state = { .active = false, .direction = false },
-        .wrist.state = { .active = false, .direction = false },
-        .gripper.state = { .active = false, .direction = false }
-    };
+    {
+        requested_state_t parsed_state = {0};
+        int index = 1;
+        int servo_index = 0;
 
-    int index = 1;
-    int servo_index = 0;
-
-    while (servo_index < 5) {
-        if (index >= (packet_length - 1)) {
-            return false;
-        }
-
-        if (packet[index] != expected_servo_order[servo_index]) {
-            return false;
-        }
-
-        index++;
-
-        if (index < (packet_length - 1)) {
-            if (packet[index] == 0x00 || packet[index] == 0x01) {
-                if (servo_index == 0) {
-                    parsed_state.base.state.active = true;
-                    parsed_state.base.state.direction = (packet[index] == 0x01);
-                }
-                else if (servo_index == 1) {
-                    parsed_state.shoulder.state.active = true;
-                    parsed_state.shoulder.state.direction = (packet[index] == 0x01);
-                }
-                else if (servo_index == 2) {
-                    parsed_state.forearm.state.active = true;
-                    parsed_state.forearm.state.direction = (packet[index] == 0x01);
-                }
-                else if (servo_index == 3) {
-                    parsed_state.wrist.state.active = true;
-                    parsed_state.wrist.state.direction = (packet[index] == 0x01);
-                }
-                else if (servo_index == 4) {
-                    parsed_state.gripper.state.active = true;
-                    parsed_state.gripper.state.direction = (packet[index] == 0x01);
-                }
-
-                index++;
+        while (servo_index < SERVO_COUNT) {
+            if (index >= (packet_length - 1)) {
+                return false;
             }
+
+            if (packet[index] != expected_servo_order[servo_index]) {
+                return false;
+            }
+
+            index++;
+
+            parsed_state.servos[servo_index].active = false;
+            parsed_state.servos[servo_index].direction = false;
+
+            if (index < (packet_length - 1)) {
+                if (packet[index] == 0x00 || packet[index] == 0x01) {
+                    parsed_state.servos[servo_index].active = true;
+                    parsed_state.servos[servo_index].direction = (packet[index] == 0x01);
+                    index++;
+                }
+            }
+
+            servo_index++;
         }
 
-        servo_index++;
+        if (index != (packet_length - 1)) {
+            return false;
+        }
+
+        *requested_state_out = parsed_state;
     }
 
-    if (index != (packet_length - 1)) {
-        return false;
-    }
-
-    *requested_state_out = parsed_state;
     return true;
 }
 
