@@ -4,7 +4,7 @@
 #define UART_PACKET_MIN_SIZE 7
 #define UART_PACKET_MAX_SIZE 12
 
-static bool parse_packet(const uint8_t *packet, int packet_length, system_state_t *requested_state_out);
+static bool parse_packet(const uint8_t *packet, int packet_length, control_state_t *requested_state_out);
 static uint8_t calculate_checksum(const uint8_t *packet, int packet_length);
 
 void uart_rx_task(void *arg)
@@ -56,7 +56,7 @@ void uart_rx_task(void *arg)
         }
 
         if (packet_index >= UART_PACKET_MIN_SIZE) {
-            system_state_t requested_state;
+            control_state_t requested_state;
 
             if (parse_packet(packet, packet_index, &requested_state)) {
                 xQueueOverwrite(servo_command_q, &requested_state);
@@ -91,7 +91,7 @@ void usb_uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(USB_UART_NUM, &cfg));
 }
 
-static bool parse_packet(const uint8_t *packet, int packet_length, system_state_t *requested_state_out)
+static bool parse_packet(const uint8_t *packet, int packet_length, control_state_t *requested_state_out)
 {
     static const uint8_t expected_servo_order[5] = { 'B', 'S', 'F', 'W', 'G' };
 
@@ -111,12 +111,12 @@ static bool parse_packet(const uint8_t *packet, int packet_length, system_state_
         return false;
     }
 
-    system_state_t parsed_state = {
-        .base = { .active = false, .direction = false },
-        .shoulder = { .active = false, .direction = false },
-        .forearm = { .active = false, .direction = false },
-        .wrist = { .active = false, .direction = false },
-        .gripper = { .active = false, .direction = false }
+    control_state_t parsed_state = {
+        .base.state = { .active = false, .direction = false },
+        .shoulder.state = { .active = false, .direction = false },
+        .forearm.state = { .active = false, .direction = false },
+        .wrist.state = { .active = false, .direction = false },
+        .gripper.state = { .active = false, .direction = false }
     };
 
     int index = 1;
@@ -136,24 +136,24 @@ static bool parse_packet(const uint8_t *packet, int packet_length, system_state_
         if (index < (packet_length - 1)) {
             if (packet[index] == 0x00 || packet[index] == 0x01) {
                 if (servo_index == 0) {
-                    parsed_state.base.active = true;
-                    parsed_state.base.direction = (packet[index] == 0x01);
+                    parsed_state.base.state.active = true;
+                    parsed_state.base.state.direction = (packet[index] == 0x01);
                 }
                 else if (servo_index == 1) {
-                    parsed_state.shoulder.active = true;
-                    parsed_state.shoulder.direction = (packet[index] == 0x01);
+                    parsed_state.shoulder.state.active = true;
+                    parsed_state.shoulder.state.direction = (packet[index] == 0x01);
                 }
                 else if (servo_index == 2) {
-                    parsed_state.forearm.active = true;
-                    parsed_state.forearm.direction = (packet[index] == 0x01);
+                    parsed_state.forearm.state.active = true;
+                    parsed_state.forearm.state.direction = (packet[index] == 0x01);
                 }
                 else if (servo_index == 3) {
-                    parsed_state.wrist.active = true;
-                    parsed_state.wrist.direction = (packet[index] == 0x01);
+                    parsed_state.wrist.state.active = true;
+                    parsed_state.wrist.state.direction = (packet[index] == 0x01);
                 }
                 else if (servo_index == 4) {
-                    parsed_state.gripper.active = true;
-                    parsed_state.gripper.direction = (packet[index] == 0x01);
+                    parsed_state.gripper.state.active = true;
+                    parsed_state.gripper.state.direction = (packet[index] == 0x01);
                 }
 
                 index++;

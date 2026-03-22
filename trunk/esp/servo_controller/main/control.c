@@ -10,17 +10,21 @@ void servo_control_task(void *arg)
 
     //build system state 
     
-
     control_startup();
 
     while(1){
 
-    system_state_t received_state;
+    control_state_t received_state;
 
     if (xQueueReceive(servo_command_q, &received_state, 0) == pdTRUE){
 
         //we can only receive two commands at a time from the pi, so we don't need
-        //to worry about writing too many servos at once. 
+        //to worry about writing too many servos at once.
+        
+
+        //this is a start..it's a bit long
+        if (system_state.control_state.base.state.active != received_state.base.state.active){
+            ~system_state.control_state.base.state.active;}
 
         //send pulse on clk
 

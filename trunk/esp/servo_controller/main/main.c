@@ -1,8 +1,6 @@
 #include "main.h"
 
-control_state_t system_state = {
-    .shutdown_requested = false,
-};
+
 
 QueueHandle_t servo_command_q;
 
@@ -10,7 +8,7 @@ void app_main(void)
 {
 
     //create queue for sending servo commands from uart task to control task.
-    servo_command_q = xQueueCreate(STATE_QUEUE_LENGTH, sizeof(system_state_t));
+    servo_command_q = xQueueCreate(STATE_QUEUE_LENGTH, sizeof(control_state_t));
 
     //startup state
     usb_uart_init();

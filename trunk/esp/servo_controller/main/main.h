@@ -22,64 +22,65 @@
 #define WRIST_GPIO GPIO_NUM_18
 #define GRIPPER_GPIO GPIO_NUM_19
 
-#define LEDC_TIMER_ID LEDC_TIMER_0
-#define LEDC_SPEED_MODE LEDC_HIGH_SPEED_MODE
-#define LEDC_DUTY_RESOLUTION LEDC_TIMER_16_BIT
-
-#define BASE_CHANNEL LEDC_CHANNEL_0
-#define SHOULDER_CHANNEL LEDC_CHANNEL_1
-#define FOREARM_CHANNEL LEDC_CHANNEL_2
-#define WRIST_CHANNEL LEDC_CHANNEL_3
-#define GRIPPER_CHANNEL LEDC_CHANNEL_4
-
-#define SERVO_FREQ_HZ 50
-#define SERVO_PERIOD_US 20000
-
-#define SERVO_US_MIN_SAFE 500
-#define SERVO_US_MAX_SAFE 2500
-#define SERVO_US_CENTER 1500
-
-#define BASE_MAX_STEP_US_PER_TICK 7
-#define SHOULDER_MAX_STEP_US_PER_TICK 5
-#define FOREARM_MAX_STEP_US_PER_TICK 5
-#define WRIST_MAX_STEP_US_PER_TICK 14
-#define GRIPPER_MAX_STEP_US_PER_TICK 18
-
-#define SERVO_ACCEL_STEP_US_PER_TICK 1
-#define SERVO_DECEL_STEP_US_PER_TICK 2
-#define SERVO_TARGET_TOLERANCE_US 2
-
 #define USB_UART_NUM UART_NUM_0
 #define USB_UART_BAUD 115200
 #define UART_RX_BUF_SIZE 1024
 
 #define STATE_QUEUE_LENGTH 1
 
+//uart.c creates a requested control state,
+//so these belong in main for now
+
+typedef enum {
+    BASE,
+    SHOULDER,
+    FOREARM,
+    WRIST,
+    GRIPPER
+} servo_id_t;
+
 typedef enum {
     accellerating,
-    decellerating,
+    decellerating,  
     at_max_speed,
     at_target
-} control_status;
+} control_status_t;
 
 typedef struct {
     bool active;
-    uint8_t direction;
-    control_status status;
+    bool direction;
+    control_status_t status;
+    uint32_t current_pulse_us;
+
 } servo_state_t;
 
 typedef struct {
-    servo_state_t base;
-    servo_state_t shoulder;
-    servo_state_t forearm;
-    servo_state_t wrist;
-    servo_state_t gripper;
-
-} system_state_t;
+    servo_id_t id;
+    servo_state_t state;
+} servo;
 
 typedef struct {
-    volatile bool shutdown_requested;
+    servo base;
+    servo shoulder;
+    servo forearm;
+    servo wrist;
+    servo gripper;
+
 } control_state_t;
+
+typedef struct {
+    bool uart_ready;
+} uart_state_t;
+
+
+//IMPORTANT: this is the global system state, not just control state.
+typedef struct {
+    volatile bool shutdown_requested;
+    control_state_t control_state;
+    uart_state_t uart_state;
+} system_t;
+
+
 
 void usb_uart_init(void);
 void servo_init(void);
@@ -87,7 +88,6 @@ void servo_init(void);
 void servo_control_task(void *arg);
 void uart_rx_task(void *arg);
 
-extern control_state_t system_state;
 extern QueueHandle_t servo_command_q;
 
-#endif
+#endif 
