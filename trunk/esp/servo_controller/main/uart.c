@@ -1,8 +1,9 @@
 #include "main.h"
 
 #define UART_PACKET_START_BYTE 0xAA
-#define UART_PACKET_MIN_SIZE 7
-#define UART_PACKET_MAX_SIZE 12
+#define UART_PACKET_SIZE 12
+#define SERVO_FLAG_ACTIVE 0x01
+#define SERVO_FLAG_DIRECTION 0x02
 
 static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out);
 static uint8_t calculate_checksum(const uint8_t *packet, int packet_length);
@@ -11,7 +12,7 @@ void uart_rx_task(void *arg)
 {
     (void)arg;
 
-    uint8_t packet[UART_PACKET_MAX_SIZE];
+    uint8_t packet[UART_PACKET_SIZE];
     int packet_index = 0;
     bool receiving_packet = false;
 
@@ -43,7 +44,7 @@ void uart_rx_task(void *arg)
             continue;
         }
 
-        if (packet_index < UART_PACKET_MAX_SIZE) {
+        if (packet_index < UART_PACKET_SIZE) {
             packet[packet_index] = received_byte;
             packet_index++;
         }
@@ -54,23 +55,18 @@ void uart_rx_task(void *arg)
             continue;
         }
 
-        if (packet_index >= UART_PACKET_MIN_SIZE) {
+        if (packet_index == UART_PACKET_SIZE) {
             requested_state_t requested_state;
 
             if (parse_packet(packet, packet_index, &requested_state)) {
                 xQueueOverwrite(servo_command_q, &requested_state);
-                uart_write_bytes(USB_UART_NUM, "OK\n", 3);
-
-                receiving_packet = false;
-                packet_index = 0;
-                continue;
             }
-        }
+            else {
+                uart_write_bytes(USB_UART_NUM, "BAD MESSAGE\n", 12);
+            }
 
-        if (packet_index == UART_PACKET_MAX_SIZE) {
             receiving_packet = false;
             packet_index = 0;
-            uart_write_bytes(USB_UART_NUM, "BAD MESSAGE\n", 12);
         }
     }
 }
@@ -90,14 +86,18 @@ void usb_uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(USB_UART_NUM, &cfg));
 }
 
-static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out){
+static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out)
+{
     static const uint8_t expected_servo_order[SERVO_COUNT] = { 'B', 'S', 'F', 'W', 'G' };
+    requested_state_t parsed_state = {0};
+    int packet_index = 1;
+    int servo_index = 0;
 
     if (packet == NULL || requested_state_out == NULL) {
         return false;
     }
 
-    if (packet_length < UART_PACKET_MIN_SIZE || packet_length > UART_PACKET_MAX_SIZE) {
+    if (packet_length != UART_PACKET_SIZE) {
         return false;
     }
 
@@ -109,43 +109,24 @@ static bool parse_packet(const uint8_t *packet, int packet_length, requested_sta
         return false;
     }
 
-    {
-        requested_state_t parsed_state = {0};
-        int index = 1;
-        int servo_index = 0;
+    for (servo_index = 0; servo_index < SERVO_COUNT; servo_index++) {
+        uint8_t servo_id = packet[packet_index];
+        uint8_t servo_flags = packet[packet_index + 1];
 
-        while (servo_index < SERVO_COUNT) {
-            if (index >= (packet_length - 1)) {
-                return false;
-            }
-
-            if (packet[index] != expected_servo_order[servo_index]) {
-                return false;
-            }
-
-            index++;
-
-            parsed_state.servos[servo_index].active = false;
-            parsed_state.servos[servo_index].direction = false;
-
-            if (index < (packet_length - 1)) {
-                if (packet[index] == 0x00 || packet[index] == 0x01) {
-                    parsed_state.servos[servo_index].active = true;
-                    parsed_state.servos[servo_index].direction = (packet[index] == 0x01);
-                    index++;
-                }
-            }
-
-            servo_index++;
-        }
-
-        if (index != (packet_length - 1)) {
+        if (servo_id != expected_servo_order[servo_index]) {
             return false;
         }
 
-        *requested_state_out = parsed_state;
+        parsed_state.servos[servo_index].active =
+            ((servo_flags & SERVO_FLAG_ACTIVE) != 0);
+
+        parsed_state.servos[servo_index].direction =
+            ((servo_flags & SERVO_FLAG_DIRECTION) != 0);
+
+        packet_index += 2;
     }
 
+    *requested_state_out = parsed_state;
     return true;
 }
 

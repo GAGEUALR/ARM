@@ -18,7 +18,7 @@ RB_CODE = ecodes.BTN_TR
 ESP_PORT = "/dev/ttyUSB0"
 ESP_BAUD = 115200
 
-SEND_HZ = 50
+SEND_HZ = 100
 SEND_DT = 1.0 / SEND_HZ
 
 START_BYTE = 0xAA
@@ -145,8 +145,15 @@ def build_packet(full_state):
         packet_bytes.append(ord(servo_name))
 
         servo_value = full_state[servo_name]
+        servo_flags = 0
+
         if servo_value in (0, 1):
-            packet_bytes.append(servo_value)
+            servo_flags |= 0x01
+
+            if servo_value == 1:
+                servo_flags |= 0x02
+
+        packet_bytes.append(servo_flags)
 
     checksum_value = 0
 
@@ -154,7 +161,14 @@ def build_packet(full_state):
         checksum_value ^= packet_byte
 
     packet_bytes.append(checksum_value)
+
     return bytes(packet_bytes)
+
+def read_available_lines(serial_port):
+    while serial_port.in_waiting > 0:
+        response = serial_port.readline().decode(errors="ignore").strip()
+        if response:
+            print(response)
 
 
 def main():
@@ -179,7 +193,6 @@ def main():
     rb_pressed = 0
 
     press_order = []
-    last_packet_sent = None
     next_send_time = time.monotonic()
 
     controller.grab()
@@ -242,14 +255,9 @@ def main():
                 full_state = build_full_state(chosen_commands)
                 packet = build_packet(full_state)
 
-                if packet != last_packet_sent:
-                    serial_port.write(packet)
-                    serial_port.flush()
-                    last_packet_sent = packet
-
-                    response = serial_port.readline().decode(errors="ignore").strip()
-                    if response:
-                        print(response)
+                serial_port.write(packet)
+                serial_port.flush()
+                read_available_lines(serial_port)
 
                 while next_send_time <= current_time:
                     next_send_time += SEND_DT
@@ -268,9 +276,7 @@ def main():
         for _ in range(3):
             serial_port.write(neutral_packet)
             serial_port.flush()
-            response = serial_port.readline().decode(errors="ignore").strip()
-            if response:
-                print(response)
+            read_available_lines(serial_port)
             time.sleep(0.02)
 
     finally:
