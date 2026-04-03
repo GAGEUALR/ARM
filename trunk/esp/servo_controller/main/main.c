@@ -1,6 +1,7 @@
 #include "main.h"
 
 QueueHandle_t servo_command_q;
+system_t system_state = {0};
 
 void app_main(void)
 {
