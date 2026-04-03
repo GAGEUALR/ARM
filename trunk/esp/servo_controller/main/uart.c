@@ -1,4 +1,4 @@
-#include "main.h"
+#include "uart.h"
 
 #define UART_PACKET_START_BYTE 0xAA
 #define UART_PACKET_SIZE 12

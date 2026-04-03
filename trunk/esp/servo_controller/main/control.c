@@ -1,4 +1,3 @@
-#include "main.h"
 #include "control.h"
 
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us);
@@ -18,10 +17,7 @@ static void apply_control_state(
     const servo_request_t *requested_servo
 );
 
-
-
-
-system_t system_state = {0};
+control_state_t control_state = {0};
 
 static const ledc_channel_t servo_channels[SERVO_COUNT] = {
     BASE_CHANNEL,
@@ -38,8 +34,6 @@ static const uint32_t servo_max_step_us[SERVO_COUNT] = {
     WRIST_MAX_STEP_US_PER_TICK,
     GRIPPER_MAX_STEP_US_PER_TICK
 };
-
-static int32_t servo_step_us[SERVO_COUNT] = { 0 };
 
 void servo_control_task(void *arg)
 {
@@ -72,20 +66,20 @@ void servo_control_task(void *arg)
 
         for (i = 0; i < SERVO_COUNT; i++) {
             update_control_state_from_request(
-                &system_state.control_state.servos[i],
+                &control_state.servos[i],
                 &effective_state->servos[i]
             );
 
             apply_control_state(
-                &system_state.control_state.servos[i],
-                &servo_step_us[i],
+                &control_state.servos[i],
+                &control_state.servos[i].servo_step_us,
                 servo_max_step_us[i],
                 &effective_state->servos[i]
             );
 
             servo_write_us(
                 servo_channels[i],
-                system_state.control_state.servos[i].current_pulse_us
+                control_state.servos[i].current_pulse_us
             );
         }
 
@@ -93,14 +87,13 @@ void servo_control_task(void *arg)
     }
 
     center_all_servos();
-    system_state.uart_state.uart_ready = false;
 }
 
 static void update_control_state_from_request(servo_state_t *control_servo, const servo_request_t *requested_servo)
 {
     if (!requested_servo->active) {
         if (control_servo->active) {
-            control_servo->status = decellerating;
+            control_servo->status = decelerating;
         }
         return;
     }
@@ -108,23 +101,23 @@ static void update_control_state_from_request(servo_state_t *control_servo, cons
     if (!control_servo->active) {
         control_servo->active = true;
         control_servo->direction = requested_servo->direction;
-        control_servo->status = accellerating;
+        control_servo->status = accelerating;
         return;
     }
 
     if (control_servo->direction != requested_servo->direction) {
-        control_servo->status = decellerating;
+        control_servo->status = decelerating;
         return;
     }
 
     if (control_servo->status == at_target) {
-        control_servo->status = accellerating;
+        control_servo->status = accelerating;
     }
 }
 
 static void apply_control_state(servo_state_t *control_servo, int32_t *current_step_us, uint32_t max_step_us, const servo_request_t *requested_servo)
 {
-    if (control_servo->status == decellerating) {
+    if (control_servo->status == decelerating) {
         if (*current_step_us > 0) {
             *current_step_us -= SERVO_DECEL_STEP_US_PER_TICK;
             if (*current_step_us < 0) {
@@ -140,7 +133,7 @@ static void apply_control_state(servo_state_t *control_servo, int32_t *current_s
             else if (control_servo->direction != requested_servo->direction) {
                 control_servo->direction = requested_servo->direction;
                 control_servo->active = true;
-                control_servo->status = accellerating;
+                control_servo->status = accelerating;
             }
             else {
                 control_servo->active = false;
@@ -148,7 +141,7 @@ static void apply_control_state(servo_state_t *control_servo, int32_t *current_s
             }
         }
     }
-    else if (control_servo->status == accellerating) {
+    else if (control_servo->status == accelerating) {
         control_servo->active = true;
 
         if (*current_step_us < (int32_t)max_step_us) {
@@ -205,14 +198,13 @@ static void control_startup(void)
     int i;
 
     system_state.shutdown_requested = false;
-    system_state.uart_state.uart_ready = false;
 
     for (i = 0; i < SERVO_COUNT; i++) {
-        system_state.control_state.servos[i].active = false;
-        system_state.control_state.servos[i].direction = false;
-        system_state.control_state.servos[i].status = at_target;
-        system_state.control_state.servos[i].current_pulse_us = SERVO_US_CENTER;//change once a good resting position is found
-        servo_step_us[i] = 0;
+        control_state.servos[i].active = false;
+        control_state.servos[i].direction = false;
+        control_state.servos[i].status = at_target;
+        control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
+        control_state.servos[i].servo_step_us = 0;
     }
 
     center_all_servos();
@@ -223,15 +215,14 @@ static void center_all_servos(void)
     int i;
 
     for (i = 0; i < SERVO_COUNT; i++) {
-        system_state.control_state.servos[i].active = false;
-        system_state.control_state.servos[i].direction = false;
-        system_state.control_state.servos[i].status = at_target;
-        system_state.control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
-        servo_step_us[i] = 0;
+        control_state.servos[i].active = false;
+        control_state.servos[i].direction = false;
+        control_state.servos[i].status = at_target;
+        control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
+        control_state.servos[i].servo_step_us = 0;
 
         servo_write_us(servo_channels[i], SERVO_US_CENTER);
         vTaskDelay(pdMS_TO_TICKS(500));
-
     }
 }
 
