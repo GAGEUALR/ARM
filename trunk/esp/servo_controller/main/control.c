@@ -77,10 +77,17 @@ void servo_control_task(void *arg)
                 &effective_state->servos[i]
             );
 
-            servo_write_us(
-                servo_channels[i],
-                control_state.servos[i].current_pulse_us
-            );
+            if (control_state.servos[i].current_pulse_us !=
+                control_state.servos[i].last_written_pulse_us) {
+
+                servo_write_us(
+                    servo_channels[i],
+                    control_state.servos[i].current_pulse_us
+                );
+
+                control_state.servos[i].last_written_pulse_us =
+                    control_state.servos[i].current_pulse_us;
+            }
         }
 
         vTaskDelayUntil(&lastWakeTime, periodTicks);
@@ -204,6 +211,7 @@ static void control_startup(void)
         control_state.servos[i].direction = false;
         control_state.servos[i].status = at_target;
         control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
+        control_state.servos[i].last_written_pulse_us = SERVO_US_CENTER;
         control_state.servos[i].servo_step_us = 0;
     }
 
@@ -219,6 +227,7 @@ static void center_all_servos(void)
         control_state.servos[i].direction = false;
         control_state.servos[i].status = at_target;
         control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
+        control_state.servos[i].last_written_pulse_us = SERVO_US_CENTER;
         control_state.servos[i].servo_step_us = 0;
 
         servo_write_us(servo_channels[i], SERVO_US_CENTER);

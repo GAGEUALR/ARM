@@ -57,6 +57,7 @@ typedef struct {
     bool direction;
     control_status_t status;
     uint32_t current_pulse_us;
+    uint32_t last_written_pulse_us;
     int32_t servo_step_us;
 } servo_state_t;
 
