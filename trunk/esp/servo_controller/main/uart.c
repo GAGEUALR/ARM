@@ -12,9 +12,6 @@ void uart_rx_task(void *arg)
 {
     (void)arg;
 
-    const TickType_t periodTicks = pdMS_TO_TICKS(2000); //wait for control to initialize and start up before trying to read. temporary fix
-    vTaskDelay(periodTicks);
-
     uint8_t packet[UART_PACKET_SIZE];
     int packet_index = 0;
     bool receiving_packet = false;
