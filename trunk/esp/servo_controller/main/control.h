@@ -35,8 +35,8 @@
 #define SERVO_ACCEL_STEP_US_PER_TICK 1
 #define SERVO_DECEL_STEP_US_PER_TICK 2
 
-#define CONTROL_LOOP_HZ 100
-#define CONTROL_TIMEOUT_MS 30
+#define CONTROL_LOOP_HZ 50
+#define CONTROL_TIMEOUT_MS 60
 
 typedef enum {
     BASE = 0,
