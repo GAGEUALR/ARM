@@ -235,7 +235,7 @@ static void center_all_servos(void)
     }
 }
 
-
+/*
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 {
     pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
@@ -248,7 +248,7 @@ static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_SPEED_MODE, channel));
 }
-
+*/
 void servo_init(void)
 {
     ledc_timer_config_t timer = {
