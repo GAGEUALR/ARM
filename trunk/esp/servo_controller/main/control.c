@@ -40,8 +40,8 @@ void servo_control_task(void *arg)
     (void)arg;
 
     TickType_t lastWakeTime = xTaskGetTickCount();
-    const TickType_t periodTicks = pdMS_TO_TICKS(1/CONTROL_LOOP_HZ);
-    const TickType_t commandTimeoutTicks = pdMS_TO_TICKS(CONTROL_TIMEOUT_MS);
+    const TickType_t periodTicks = pdMS_TO_TICKS(10);
+    const TickType_t commandTimeoutTicks = pdMS_TO_TICKS(30);
 
     requested_state_t requested_state = {0};
     requested_state_t received_state;
@@ -238,17 +238,16 @@ static void center_all_servos(void)
 
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 {
-    uint32_t duty;
-
     pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
-    duty = servo_us_to_duty(pulse_us);
 
-    ESP_ERROR_CHECK(ledc_set_duty_and_update( //ledc_set_duty_and_update is thread safe
+    return;
+    ESP_ERROR_CHECK(ledc_set_duty(
         LEDC_SPEED_MODE,
         channel,
-        duty,
-        0
+        servo_us_to_duty(pulse_us)
     ));
+
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_SPEED_MODE, channel));
 }
 
 void servo_init(void)

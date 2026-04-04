@@ -5,7 +5,7 @@
 
 #define BASE_GPIO GPIO_NUM_4
 #define SHOULDER_GPIO GPIO_NUM_17
-#define FOREARM_GPIO GPIO_NUM_16 
+#define FOREARM_GPIO GPIO_NUM_25    
 #define WRIST_GPIO GPIO_NUM_18
 #define GRIPPER_GPIO GPIO_NUM_19
 
@@ -36,7 +36,6 @@
 #define SERVO_DECEL_STEP_US_PER_TICK 2
 
 #define CONTROL_LOOP_HZ 100
-#define CONTROL_TIMEOUT_MS 30
 
 typedef enum {
     BASE = 0,
