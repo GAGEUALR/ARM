@@ -240,6 +240,7 @@ static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 {
     pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
 
+    return;
     ESP_ERROR_CHECK(ledc_set_duty(
         LEDC_SPEED_MODE,
         channel,
