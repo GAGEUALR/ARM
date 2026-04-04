@@ -40,7 +40,7 @@ void servo_control_task(void *arg)
     (void)arg;
 
     TickType_t lastWakeTime = xTaskGetTickCount();
-    const TickType_t periodTicks = pdMS_TO_TICKS((1/CONTROL_LOOP_HZ)*1000);
+    const TickType_t periodTicks = pdMS_TO_TICKS(20);
     const TickType_t commandTimeoutTicks = pdMS_TO_TICKS(CONTROL_TIMEOUT_MS);
 
     requested_state_t requested_state = {0};
