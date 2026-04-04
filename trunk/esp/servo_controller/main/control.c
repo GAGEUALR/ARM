@@ -238,17 +238,16 @@ static void center_all_servos(void)
 
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 {
-    pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
+    uint32_t duty;
 
-    ESP_ERROR_CHECK(ledc_set_duty(
+    pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
+    duty = servo_us_to_duty(pulse_us);
+
+    ESP_ERROR_CHECK(ledc_set_duty_and_update( //ledc_set_duty_and_update is thread safe
         LEDC_SPEED_MODE,
         channel,
-        servo_us_to_duty(pulse_us)
-    ));
-
-    ESP_ERROR_CHECK(ledc_update_duty(
-        LEDC_SPEED_MODE,
-        channel
+        duty,
+        0
     ));
 }
 
