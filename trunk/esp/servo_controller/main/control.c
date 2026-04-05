@@ -49,10 +49,16 @@ void servo_control_task(void *arg)
 
     TickType_t last_command_tick = xTaskGetTickCount();
 
+    uint32_t loopCount = 0;
+    uint32_t overrunCount = 0;
+    int64_t worstLoopUs = 0;
+    int64_t lastReportUs = esp_timer_get_time();
+
     control_startup();
 
     while (!system_state.shutdown_requested) {
         const requested_state_t *effective_state = &requested_state;
+        int64_t loopStartUs = esp_timer_get_time();
         int i;
 
         if (xQueueReceive(servo_command_q, &received_state, 0) == pdTRUE) {
@@ -87,6 +93,34 @@ void servo_control_task(void *arg)
 
                 control_state.servos[i].last_written_pulse_us =
                     control_state.servos[i].current_pulse_us;
+            }
+        }
+
+        {
+            int64_t loopElapsedUs = esp_timer_get_time() - loopStartUs;
+
+            loopCount++;
+
+            if (loopElapsedUs > worstLoopUs) {
+                worstLoopUs = loopElapsedUs;
+            }
+
+            if (loopElapsedUs >= 10000) {
+                overrunCount++;
+            }
+
+            if ((esp_timer_get_time() - lastReportUs) >= 1000000) {
+                printf(
+                    "ctrl loops=%lu overruns=%lu worst_us=%lld\n",
+                    (unsigned long)loopCount,
+                    (unsigned long)overrunCount,
+                    (long long)worstLoopUs
+                );
+
+                loopCount = 0;
+                overrunCount = 0;
+                worstLoopUs = 0;
+                lastReportUs = esp_timer_get_time();
             }
         }
 

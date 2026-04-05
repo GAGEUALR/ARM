@@ -16,6 +16,8 @@
 #include "driver/gpio.h"
 #include "esp_err.h"
 
+#include "esp_timer.h"
+
 #define SERVO_COUNT 5
 #define STATE_QUEUE_LENGTH 1
 
