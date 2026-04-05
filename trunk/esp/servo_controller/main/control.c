@@ -49,16 +49,10 @@ void servo_control_task(void *arg)
 
     TickType_t last_command_tick = xTaskGetTickCount();
 
-    uint32_t loopCount = 0;
-    uint32_t overrunCount = 0;
-    int64_t worstLoopUs = 0;
-    int64_t lastReportUs = esp_timer_get_time();
-
     control_startup();
 
     while (!system_state.shutdown_requested) {
         const requested_state_t *effective_state = &requested_state;
-        int64_t loopStartUs = esp_timer_get_time();
         int i;
 
         if (xQueueReceive(servo_command_q, &received_state, 0) == pdTRUE) {
@@ -93,34 +87,6 @@ void servo_control_task(void *arg)
 
                 control_state.servos[i].last_written_pulse_us =
                     control_state.servos[i].current_pulse_us;
-            }
-        }
-
-        {
-            int64_t loopElapsedUs = esp_timer_get_time() - loopStartUs;
-
-            loopCount++;
-
-            if (loopElapsedUs > worstLoopUs) {
-                worstLoopUs = loopElapsedUs;
-            }
-
-            if (loopElapsedUs >= 10000) {
-                overrunCount++;
-            }
-
-            if ((esp_timer_get_time() - lastReportUs) >= 1000000) {
-                printf(
-                    "ctrl loops=%lu overruns=%lu worst_us=%lld\n",
-                    (unsigned long)loopCount,
-                    (unsigned long)overrunCount,
-                    (long long)worstLoopUs
-                );
-
-                loopCount = 0;
-                overrunCount = 0;
-                worstLoopUs = 0;
-                lastReportUs = esp_timer_get_time();
             }
         }
 
@@ -271,15 +237,76 @@ static void center_all_servos(void)
 
 static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
 {
-    pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
+    static uint32_t callCount = 0;
+    static uint32_t slowSetCount = 0;
+    static uint32_t slowUpdateCount = 0;
+    static int64_t worstSetUs = 0;
+    static int64_t worstUpdateUs = 0;
+    static int64_t lastReportUs = 0;
 
+    int64_t setStartUs;
+    int64_t updateStartUs;
+    int64_t setElapsedUs;
+    int64_t updateElapsedUs;
+    uint32_t duty;
+
+    if (lastReportUs == 0) {
+        lastReportUs = esp_timer_get_time();
+    }
+
+    pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
+    duty = servo_us_to_duty(pulse_us);
+
+    setStartUs = esp_timer_get_time();
     ESP_ERROR_CHECK(ledc_set_duty(
         LEDC_SPEED_MODE,
         channel,
-        servo_us_to_duty(pulse_us)
+        duty
     ));
+    setElapsedUs = esp_timer_get_time() - setStartUs;
 
-    ESP_ERROR_CHECK(ledc_update_duty(LEDC_SPEED_MODE, channel));
+    updateStartUs = esp_timer_get_time();
+    ESP_ERROR_CHECK(ledc_update_duty(
+        LEDC_SPEED_MODE,
+        channel
+    ));
+    updateElapsedUs = esp_timer_get_time() - updateStartUs;
+
+    callCount++;
+
+    if (setElapsedUs > worstSetUs) {
+        worstSetUs = setElapsedUs;
+    }
+
+    if (updateElapsedUs > worstUpdateUs) {
+        worstUpdateUs = updateElapsedUs;
+    }
+
+    if (setElapsedUs >= 1000) {
+        slowSetCount++;
+    }
+
+    if (updateElapsedUs >= 1000) {
+        slowUpdateCount++;
+    }
+
+    if ((esp_timer_get_time() - lastReportUs) >= 1000000) {
+        printf(
+            "servo_write calls=%lu slow_set=%lu slow_update=%lu worst_set_us=%lld worst_update_us=%lld\n",
+            (unsigned long)callCount,
+            (unsigned long)slowSetCount,
+            (unsigned long)slowUpdateCount,
+            (long long)worstSetUs,
+            (long long)worstUpdateUs
+        );
+
+        callCount = 0;
+        slowSetCount = 0;
+        slowUpdateCount = 0;
+        worstSetUs = 0;
+        worstUpdateUs = 0;
+        lastReportUs = esp_timer_get_time();
+    }
 }
 
 void servo_init(void)
