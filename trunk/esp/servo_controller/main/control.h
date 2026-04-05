@@ -9,22 +9,15 @@
 #define WRIST_GPIO GPIO_NUM_18
 #define GRIPPER_GPIO GPIO_NUM_19
 
-#define LEDC_TIMER_ID LEDC_TIMER_0
-#define LEDC_SPEED_MODE LEDC_HIGH_SPEED_MODE
-#define LEDC_DUTY_RESOLUTION LEDC_TIMER_16_BIT
-
-#define BASE_CHANNEL LEDC_CHANNEL_0
-#define SHOULDER_CHANNEL LEDC_CHANNEL_1
-#define FOREARM_CHANNEL LEDC_CHANNEL_2
-#define WRIST_CHANNEL LEDC_CHANNEL_3
-#define GRIPPER_CHANNEL LEDC_CHANNEL_4
-
 #define SERVO_FREQ_HZ 50
 #define SERVO_PERIOD_US 20000
 
 #define SERVO_US_MIN_SAFE 500
 #define SERVO_US_MAX_SAFE 2500
 #define SERVO_US_CENTER 1500
+
+#define SERVO_FRAME_US 10000
+#define MCPWM_TIMER_RESOLUTION_HZ 1000000
 
 #define BASE_MAX_STEP_US_PER_TICK 3
 #define SHOULDER_MAX_STEP_US_PER_TICK 3
@@ -36,6 +29,8 @@
 #define SERVO_DECEL_STEP_US_PER_TICK 2
 
 #define CONTROL_LOOP_HZ 100
+
+
 
 typedef enum {
     BASE = 0,
@@ -64,5 +59,15 @@ typedef struct {
 typedef struct {
     servo_state_t servos[SERVO_COUNT];
 } control_state_t;
+
+typedef struct {
+    mcpwm_oper_handle_t oper;
+    mcpwm_cmpr_handle_t comparator;
+    mcpwm_gen_handle_t generator;
+} servo_output_t;
+
+
+extern const gpio_num_t servo_gpios[SERVO_COUNT];
+extern servo_output_t servo_outputs[SERVO_COUNT];
 
 #endif

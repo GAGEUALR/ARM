@@ -1,11 +1,9 @@
 #include "control.h"
 
-static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us);
 static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi);
-static inline uint32_t servo_us_to_duty(uint32_t pulse_us);
-static void configure_servo_channel(gpio_num_t gpio, ledc_channel_t channel);
 static void control_startup(void);
 static void center_all_servos(void);
+static void servo_write_us(servo_id_t servo, uint32_t pulse_us);
 static void update_control_state_from_request(
     servo_state_t *control_servo,
     const servo_request_t *requested_servo
@@ -17,14 +15,18 @@ static void apply_control_state(
     const servo_request_t *requested_servo
 );
 
-control_state_t control_state = {0};
 
-static const ledc_channel_t servo_channels[SERVO_COUNT] = {
-    BASE_CHANNEL,
-    SHOULDER_CHANNEL,
-    FOREARM_CHANNEL,
-    WRIST_CHANNEL,
-    GRIPPER_CHANNEL
+static mcpwm_timer_handle_t servo_timer = NULL;
+control_state_t control_state = {0};
+servo_output_t servo_outputs[SERVO_COUNT] = {0};
+
+
+const gpio_num_t servo_gpios[SERVO_COUNT] = {
+    BASE_GPIO,
+    SHOULDER_GPIO,
+    FOREARM_GPIO,
+    WRIST_GPIO,
+    GRIPPER_GPIO
 };
 
 static const uint32_t servo_max_step_us[SERVO_COUNT] = {
@@ -81,7 +83,7 @@ void servo_control_task(void *arg)
                 control_state.servos[i].last_written_pulse_us) {
 
                 servo_write_us(
-                    servo_channels[i],
+                    (servo_id_t)i,
                     control_state.servos[i].current_pulse_us
                 );
 
@@ -230,130 +232,97 @@ static void center_all_servos(void)
         control_state.servos[i].last_written_pulse_us = SERVO_US_CENTER;
         control_state.servos[i].servo_step_us = 0;
 
-        servo_write_us(servo_channels[i], SERVO_US_CENTER);
+        servo_write_us((servo_id_t)i, SERVO_US_CENTER);
         vTaskDelay(pdMS_TO_TICKS(500));
-    }
-}
-
-static void servo_write_us(ledc_channel_t channel, uint32_t pulse_us)
-{
-    static uint32_t callCount = 0;
-    static uint32_t slowSetCount = 0;
-    static uint32_t slowUpdateCount = 0;
-    static int64_t worstSetUs = 0;
-    static int64_t worstUpdateUs = 0;
-    static int64_t lastReportUs = 0;
-
-    int64_t setStartUs;
-    int64_t updateStartUs;
-    int64_t setElapsedUs;
-    int64_t updateElapsedUs;
-    uint32_t duty;
-
-    if (lastReportUs == 0) {
-        lastReportUs = esp_timer_get_time();
-    }
-
-    pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
-    duty = servo_us_to_duty(pulse_us);
-
-    setStartUs = esp_timer_get_time();
-    ESP_ERROR_CHECK(ledc_set_duty(
-        LEDC_SPEED_MODE,
-        channel,
-        duty
-    ));
-    setElapsedUs = esp_timer_get_time() - setStartUs;
-
-    updateStartUs = esp_timer_get_time();
-    ESP_ERROR_CHECK(ledc_update_duty(
-        LEDC_SPEED_MODE,
-        channel
-    ));
-    updateElapsedUs = esp_timer_get_time() - updateStartUs;
-
-    callCount++;
-
-    if (setElapsedUs > worstSetUs) {
-        worstSetUs = setElapsedUs;
-    }
-
-    if (updateElapsedUs > worstUpdateUs) {
-        worstUpdateUs = updateElapsedUs;
-    }
-
-    if (setElapsedUs >= 1000) {
-        slowSetCount++;
-    }
-
-    if (updateElapsedUs >= 1000) {
-        slowUpdateCount++;
-    }
-
-    if ((esp_timer_get_time() - lastReportUs) >= 1000000) {
-        printf(
-            "servo_write calls=%lu slow_set=%lu slow_update=%lu worst_set_us=%lld worst_update_us=%lld\n",
-            (unsigned long)callCount,
-            (unsigned long)slowSetCount,
-            (unsigned long)slowUpdateCount,
-            (long long)worstSetUs,
-            (long long)worstUpdateUs
-        );
-
-        callCount = 0;
-        slowSetCount = 0;
-        slowUpdateCount = 0;
-        worstSetUs = 0;
-        worstUpdateUs = 0;
-        lastReportUs = esp_timer_get_time();
     }
 }
 
 void servo_init(void)
 {
-    ledc_timer_config_t timer = {
-        .speed_mode       = LEDC_SPEED_MODE,
-        .timer_num        = LEDC_TIMER_ID,
-        .duty_resolution  = LEDC_DUTY_RESOLUTION,
-        .freq_hz          = SERVO_FREQ_HZ,
-        .clk_cfg          = LEDC_AUTO_CLK,
+    int i;
+
+    mcpwm_timer_config_t timer_config = {
+        .group_id = 0,
+        .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
+        .resolution_hz = MCPWM_TIMER_RESOLUTION_HZ,
+        .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
+        .period_ticks = SERVO_FRAME_US,
+        .flags.update_period_on_empty = false,
+        .flags.update_period_on_sync = false,
     };
 
-    ESP_ERROR_CHECK(ledc_timer_config(&timer));
+    ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &servo_timer));
 
-    configure_servo_channel(BASE_GPIO, BASE_CHANNEL);
-    configure_servo_channel(SHOULDER_GPIO, SHOULDER_CHANNEL);
-    configure_servo_channel(FOREARM_GPIO, FOREARM_CHANNEL);
-    configure_servo_channel(WRIST_GPIO, WRIST_CHANNEL);
-    configure_servo_channel(GRIPPER_GPIO, GRIPPER_CHANNEL);
+    for (i = 0; i < SERVO_COUNT; i++) {
+        mcpwm_operator_config_t operator_config = {
+            .group_id = 0,
+        };
+
+        mcpwm_comparator_config_t comparator_config = {
+            .flags.update_cmp_on_tez = true,
+        };
+
+        mcpwm_generator_config_t generator_config = {
+            .gen_gpio_num = servo_gpios[i],
+        };
+
+        ESP_ERROR_CHECK(mcpwm_new_operator(&operator_config, &servo_outputs[i].oper));
+        ESP_ERROR_CHECK(mcpwm_operator_connect_timer(servo_outputs[i].oper, servo_timer));
+
+        ESP_ERROR_CHECK(mcpwm_new_comparator(
+            servo_outputs[i].oper,
+            &comparator_config,
+            &servo_outputs[i].comparator
+        ));
+
+        ESP_ERROR_CHECK(mcpwm_new_generator(
+            servo_outputs[i].oper,
+            &generator_config,
+            &servo_outputs[i].generator
+        ));
+
+        ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(
+            servo_outputs[i].generator,
+            MCPWM_GEN_TIMER_EVENT_ACTION(
+                MCPWM_TIMER_DIRECTION_UP,
+                MCPWM_TIMER_EVENT_EMPTY,
+                MCPWM_GEN_ACTION_HIGH
+            )
+        ));
+
+        ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(
+            servo_outputs[i].generator,
+            MCPWM_GEN_COMPARE_EVENT_ACTION(
+                MCPWM_TIMER_DIRECTION_UP,
+                servo_outputs[i].comparator,
+                MCPWM_GEN_ACTION_LOW
+            )
+        ));
+
+        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(
+            servo_outputs[i].comparator,
+            SERVO_US_CENTER
+        ));
+    }
+
+    ESP_ERROR_CHECK(mcpwm_timer_enable(servo_timer));
+    ESP_ERROR_CHECK(mcpwm_timer_start_stop(servo_timer, MCPWM_TIMER_START_NO_STOP));
 }
 
-static void configure_servo_channel(gpio_num_t gpio, ledc_channel_t channel)
-{
-    ledc_channel_config_t ch = {
-        .gpio_num   = gpio,
-        .speed_mode = LEDC_SPEED_MODE,
-        .channel    = channel,
-        .timer_sel  = LEDC_TIMER_ID,
-        .duty       = servo_us_to_duty(SERVO_US_CENTER),
-        .hpoint     = 0,
-    };
-
-    ESP_ERROR_CHECK(ledc_channel_config(&ch));
-    ESP_ERROR_CHECK(ledc_update_duty(LEDC_SPEED_MODE, channel));
-}
-
-static inline uint32_t servo_us_to_duty(uint32_t pulse_us)
-{
-    const uint32_t duty_max = (1u << 16) - 1u;
-
-    pulse_us = clamp_u32(pulse_us, 0, SERVO_PERIOD_US);
-    return (pulse_us * duty_max) / SERVO_PERIOD_US;
-}
 
 static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+static void servo_write_us(servo_id_t servo, uint32_t pulse_us)
+{
+    pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
+
+    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(
+        servo_outputs[servo].comparator,
+        pulse_us
+    ));
 }
