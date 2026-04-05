@@ -16,10 +16,18 @@ static void apply_control_state(
 );
 
 
-static mcpwm_timer_handle_t servo_timer = NULL;
 control_state_t control_state = {0};
 servo_output_t servo_outputs[SERVO_COUNT] = {0};
 
+static mcpwm_timer_handle_t servo_timers[2] = {0};
+
+static const int servo_group_ids[SERVO_COUNT] = {
+    0,
+    0,
+    0,
+    1,
+    1
+};
 
 const gpio_num_t servo_gpios[SERVO_COUNT] = {
     BASE_GPIO,
@@ -239,23 +247,28 @@ static void center_all_servos(void)
 
 void servo_init(void)
 {
+    int group_id;
     int i;
 
-    mcpwm_timer_config_t timer_config = {
-        .group_id = 0,
-        .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
-        .resolution_hz = MCPWM_TIMER_RESOLUTION_HZ,
-        .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
-        .period_ticks = SERVO_FRAME_US,
-        .flags.update_period_on_empty = false,
-        .flags.update_period_on_sync = false,
-    };
+    for (group_id = 0; group_id < 2; group_id++) {
+        mcpwm_timer_config_t timer_config = {
+            .group_id = group_id,
+            .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
+            .resolution_hz = MCPWM_TIMER_RESOLUTION_HZ,
+            .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
+            .period_ticks = SERVO_FRAME_US,
+            .flags.update_period_on_empty = false,
+            .flags.update_period_on_sync = false,
+        };
 
-    ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &servo_timer));
+        ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &servo_timers[group_id]));
+    }
 
     for (i = 0; i < SERVO_COUNT; i++) {
+        int current_group = servo_group_ids[i];
+
         mcpwm_operator_config_t operator_config = {
-            .group_id = 0,
+            .group_id = current_group,
         };
 
         mcpwm_comparator_config_t comparator_config = {
@@ -267,7 +280,10 @@ void servo_init(void)
         };
 
         ESP_ERROR_CHECK(mcpwm_new_operator(&operator_config, &servo_outputs[i].oper));
-        ESP_ERROR_CHECK(mcpwm_operator_connect_timer(servo_outputs[i].oper, servo_timer));
+        ESP_ERROR_CHECK(mcpwm_operator_connect_timer(
+            servo_outputs[i].oper,
+            servo_timers[current_group]
+        ));
 
         ESP_ERROR_CHECK(mcpwm_new_comparator(
             servo_outputs[i].oper,
@@ -305,8 +321,13 @@ void servo_init(void)
         ));
     }
 
-    ESP_ERROR_CHECK(mcpwm_timer_enable(servo_timer));
-    ESP_ERROR_CHECK(mcpwm_timer_start_stop(servo_timer, MCPWM_TIMER_START_NO_STOP));
+    for (group_id = 0; group_id < 2; group_id++) {
+        ESP_ERROR_CHECK(mcpwm_timer_enable(servo_timers[group_id]));
+        ESP_ERROR_CHECK(mcpwm_timer_start_stop(
+            servo_timers[group_id],
+            MCPWM_TIMER_START_NO_STOP
+        ));
+    }
 }
 
 
