@@ -1,12 +1,41 @@
+"""
+
+This is the control interface for the Raspberry Pi 4 --> ESP32. 
+
+Right now it handles everything from connecting controller to sending bytes over UART.
+
+It should probably be split up into seperate modules that the system can take over
+
+Preferably into:
+
+Controller connection
+
+Controller feed
+
+UART Communication
+
+Intestines to GUI
+
+
+
+"""
+
+
+
 import time
 import select
 import serial
 
 from evdev import InputDevice, ecodes
 
+
+#these are hard-coded and need to change
 EVENT_PATH = "/dev/input/event11"
 REQUIRED_NAME = "Xbox Wireless Controller"
 
+
+#these are fine, maybe need to go in a class to support other
+#controller types
 LT_CODE = ecodes.ABS_Z
 RT_CODE = ecodes.ABS_RZ
 LSX_CODE = ecodes.ABS_X
@@ -15,21 +44,29 @@ DPAD_X_CODE = ecodes.ABS_HAT0X
 LB_CODE = ecodes.BTN_TL
 RB_CODE = ecodes.BTN_TR
 
+#also needs dynamic configuration, maybe in the GUI?
 ESP_PORT = "/dev/ttyUSB0"
 ESP_BAUD = 115200
 
+
+#these are pretty solid, we want to update the commands every 
+#10ms. 
 SEND_HZ = 100
 SEND_DT = 1.0 / SEND_HZ
 
+#UART start byte and servo order need to be the same, every time.
+#the esp should send alert if byte is corrupted
 START_BYTE = 0xAA
 SERVO_ORDER = ("B", "S", "F", "W", "G")
 NEUTRAL = None
 
+#these are calibrated, maybe we make these configurable?
 TRIGGER_THRESHOLD = 80
 STICK_DEADBAND = 12000
 
 
 def clamp(v, lo, hi):
+    #some controller buttons are absolute, and require 0/1 control.
     if v < lo:
         return lo
 
@@ -40,6 +77,8 @@ def clamp(v, lo, hi):
 
 
 def stick_direction(raw_value, center=0, deadband=STICK_DEADBAND):
+    #As of now, the sticks control the Wrist and Base Servos.
+    #These probably shouldn't be 0/1 control
     distance_from_center = raw_value - center
 
     if distance_from_center < -deadband:
@@ -64,6 +103,7 @@ def dpad_direction(raw_value):
 
 
 def trigger_direction(lt_value, rt_value, threshold=TRIGGER_THRESHOLD):
+    #triggers probably shouldn't be 0/1 either
     left_trigger_active = lt_value > threshold
     right_trigger_active = rt_value > threshold
 
@@ -164,6 +204,9 @@ def build_packet(full_state):
 
     return bytes(packet_bytes)
 
+
+
+
 def read_available_lines(serial_port):
     while serial_port.in_waiting > 0:
         response = serial_port.readline().decode(errors="ignore").strip()
@@ -195,8 +238,8 @@ def main():
     press_order = []
     next_send_time = time.monotonic()
 
+    #add guards around this to prevent crashing if no controller
     controller.grab()
-
     try:
         while True:
             current_time = time.monotonic()
@@ -205,6 +248,9 @@ def main():
             if wait_timeout < 0:
                 wait_timeout = 0
 
+            #this blocks until three evaluate to true.
+            #I want to continue communication over uart
+            #absolutely every 10ms.
             ready_to_read = select.select(
                 [controller.fd],
                 [],
@@ -262,7 +308,7 @@ def main():
                 while next_send_time <= current_time:
                     next_send_time += SEND_DT
 
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:   #this doesn't work on shutdown...
         neutral_state = {
             "B": NEUTRAL,
             "S": NEUTRAL,
@@ -279,16 +325,16 @@ def main():
             read_available_lines(serial_port)
             time.sleep(0.02)
 
-    finally:
-        try:
-            controller.ungrab()
-        except Exception:
-            pass
-
         try:
             serial_port.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print("\n\nError: ", e,"While closing serial port on shutdown!\n\n")
+
+    finally:
+        try:
+            controller.ungrab() 
+        except Exception as e:
+            print("Error ungrabbing controller on shutdown! \n", e)
 
 
 if __name__ == "__main__":

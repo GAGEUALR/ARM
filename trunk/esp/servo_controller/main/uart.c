@@ -8,6 +8,8 @@
 static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out);
 static uint8_t calculate_checksum(const uint8_t *packet, int packet_length);
 
+static const uint8_t expected_servo_order[SERVO_COUNT] = { 'B', 'S', 'F', 'W', 'G' };
+
 void uart_rx_task(void *arg)
 {
     (void)arg;
@@ -17,12 +19,12 @@ void uart_rx_task(void *arg)
     bool receiving_packet = false;
 
     while (1) {
-        uint8_t received_byte = 0;
+        uint8_t received_byte = 0; //buffer init
         int bytes_read = uart_read_bytes(
             USB_UART_NUM,
             &received_byte,
             1,
-            pdMS_TO_TICKS(100)
+            pdMS_TO_TICKS(100)  //wait up to 100ms?
         );
 
         if (bytes_read <= 0) {
@@ -56,6 +58,8 @@ void uart_rx_task(void *arg)
         }
 
         if (packet_index == UART_PACKET_SIZE) {
+
+
             requested_state_t requested_state;
 
             if (parse_packet(packet, packet_index, &requested_state)) {
@@ -88,7 +92,7 @@ void usb_uart_init(void)
 
 static bool parse_packet(const uint8_t *packet, int packet_length, requested_state_t *requested_state_out)
 {
-    static const uint8_t expected_servo_order[SERVO_COUNT] = { 'B', 'S', 'F', 'W', 'G' };
+
     requested_state_t parsed_state = {0};
     int packet_index = 1;
     int servo_index = 0;
