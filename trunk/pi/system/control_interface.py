@@ -57,12 +57,33 @@ SEND_DT = 1.0 / SEND_HZ
 #UART start byte and servo order need to be the same, every time.
 #the esp should send alert if byte is corrupted
 START_BYTE = 0xAA
+PACKET_SIZE = 15
+CRC8_POLYNOMIAL = 0x07
+
+REQUEST_VERSION = 1
+REQUEST_TYPE_SERVO = 1
+
+SERVO_COMMAND_MOVE = 0x01
+
 SERVO_ORDER = ("B", "S", "F", "W", "G")
 NEUTRAL = None
 
 #these are calibrated, maybe we make these configurable?
 TRIGGER_THRESHOLD = 80
 STICK_DEADBAND = 12000
+
+#these should match the safe PWM limits in the ESP32 firmware
+SERVO_US_MIN_SAFE = 500
+SERVO_US_MAX_SAFE = 2500
+SERVO_US_CENTER = 1500
+
+STICK_RAW_MIN = -32768
+STICK_RAW_MAX = 32767
+
+#Xbox controller triggers are often 0-1023 on Linux evdev.
+#if your evtest output shows 0-255 instead, change this to 255.
+TRIGGER_RAW_MIN = 0
+TRIGGER_RAW_MAX = 1023
 
 
 def clamp(v, lo, hi):
@@ -76,63 +97,106 @@ def clamp(v, lo, hi):
     return v
 
 
-def stick_direction(raw_value, center=0, deadband=STICK_DEADBAND):
+def map_range(value, input_min, input_max, output_min, output_max):
+    value = clamp(value, input_min, input_max)
+
+    input_span = input_max - input_min
+    output_span = output_max - output_min
+
+    scaled_value = (value - input_min) / input_span
+
+    return int(output_min + (scaled_value * output_span))
+
+
+def map_signed_value_to_pwm(value):
+    value = clamp(value, -1.0, 1.0)
+
+    if value < 0:
+        return int(SERVO_US_CENTER + (value * (SERVO_US_CENTER - SERVO_US_MIN_SAFE)))
+
+    return int(SERVO_US_CENTER + (value * (SERVO_US_MAX_SAFE - SERVO_US_CENTER)))
+
+
+def stick_to_pwm(raw_value, center=0, deadband=STICK_DEADBAND):
     #As of now, the sticks control the Wrist and Base Servos.
     #These probably shouldn't be 0/1 control
     distance_from_center = raw_value - center
 
-    if distance_from_center < -deadband:
-        return 0
+    if abs(distance_from_center) < deadband:
+        return NEUTRAL
 
-    if distance_from_center > deadband:
-        return 1
+    return map_range(
+        raw_value,
+        STICK_RAW_MIN,
+        STICK_RAW_MAX,
+        SERVO_US_MIN_SAFE,
+        SERVO_US_MAX_SAFE
+    )
 
-    return NEUTRAL
 
-
-def dpad_direction(raw_value):
+def dpad_to_pwm(raw_value):
     limited_value = clamp(int(raw_value), -1, 1)
 
     if limited_value < 0:
-        return 0
+        return SERVO_US_MIN_SAFE
 
     if limited_value > 0:
-        return 1
+        return SERVO_US_MAX_SAFE
 
     return NEUTRAL
 
 
-def trigger_direction(lt_value, rt_value, threshold=TRIGGER_THRESHOLD):
+def trigger_pair_to_pwm(lt_value, rt_value, threshold=TRIGGER_THRESHOLD):
     #triggers probably shouldn't be 0/1 either
     left_trigger_active = lt_value > threshold
     right_trigger_active = rt_value > threshold
 
-    if left_trigger_active and not right_trigger_active:
-        return 0
+    if not left_trigger_active and not right_trigger_active:
+        return NEUTRAL
 
-    if right_trigger_active and not left_trigger_active:
-        return 1
+    left_value = clamp(lt_value, TRIGGER_RAW_MIN, TRIGGER_RAW_MAX)
+    right_value = clamp(rt_value, TRIGGER_RAW_MIN, TRIGGER_RAW_MAX)
 
-    return NEUTRAL
+    left_normalized = left_value / TRIGGER_RAW_MAX
+    right_normalized = right_value / TRIGGER_RAW_MAX
+
+    combined_value = right_normalized - left_normalized
+
+    return map_signed_value_to_pwm(combined_value)
 
 
-def button_pair_direction(negative_pressed, positive_pressed):
+def button_pair_to_pwm(negative_pressed, positive_pressed):
     if negative_pressed and not positive_pressed:
-        return 0
+        return SERVO_US_MIN_SAFE
 
     if positive_pressed and not negative_pressed:
-        return 1
+        return SERVO_US_MAX_SAFE
 
     return NEUTRAL
+
+
+def calculate_crc8(data):
+    crc = 0x00
+
+    for byte in data:
+        crc ^= byte
+
+        for _ in range(8):
+            if crc & 0x80:
+                crc = ((crc << 1) ^ CRC8_POLYNOMIAL) & 0xFF
+            else:
+                crc = (crc << 1) & 0xFF
+
+    return crc
 
 
 def build_commands(lt_value, rt_value, lsx_value, rsx_value, dpx_value, lb_pressed, rb_pressed):
     raw_commands = {
-        "B": stick_direction(lsx_value),
-        "S": stick_direction(rsx_value),
-        "F": button_pair_direction(lb_pressed, rb_pressed),
-        "W": dpad_direction(dpx_value),
-        "G": trigger_direction(lt_value, rt_value)
+        "B": stick_to_pwm(lsx_value),
+        "S": stick_to_pwm(rsx_value),
+        "F": button_pair_to_pwm(lb_pressed, rb_pressed),
+        "W": dpad_to_pwm(dpx_value),
+        "G": trigger_pair_to_pwm(lt_value, rt_value)
     }
 
     return raw_commands
@@ -177,30 +241,51 @@ def build_full_state(chosen_commands):
     return full_state
 
 
-def build_packet(full_state):
+def update_requested_pwm_values(full_state, requested_pwm_values):
+    for servo_name in SERVO_ORDER:
+        requested_pulse = full_state[servo_name]
+
+        if requested_pulse is NEUTRAL:
+            continue
+
+        requested_pwm_values[servo_name] = clamp(
+            requested_pulse,
+            SERVO_US_MIN_SAFE,
+            SERVO_US_MAX_SAFE
+        )
+
+
+def build_packet(requested_pwm_values, message_id):
     packet_bytes = bytearray()
     packet_bytes.append(START_BYTE)
+    packet_bytes.append(REQUEST_VERSION)
+    packet_bytes.append(message_id & 0xFF)
+    packet_bytes.append(REQUEST_TYPE_SERVO)
 
     for servo_name in SERVO_ORDER:
-        packet_bytes.append(ord(servo_name))
+        command_type = SERVO_COMMAND_MOVE
 
-        servo_value = full_state[servo_name]
-        servo_flags = 0
+        requested_pulse = clamp(
+            requested_pwm_values[servo_name],
+            SERVO_US_MIN_SAFE,
+            SERVO_US_MAX_SAFE
+        )
 
-        if servo_value in (0, 1):
-            servo_flags |= 0x01
+        packed_high = (
+            ((command_type & 0x0F) << 4) |
+            ((requested_pulse >> 8) & 0x0F)
+        )
 
-            if servo_value == 1:
-                servo_flags |= 0x02
+        packed_low = requested_pulse & 0xFF
 
-        packet_bytes.append(servo_flags)
+        packet_bytes.append(packed_high)
+        packet_bytes.append(packed_low)
 
-    checksum_value = 0
+    crc = calculate_crc8(packet_bytes)
+    packet_bytes.append(crc)
 
-    for packet_byte in packet_bytes:
-        checksum_value ^= packet_byte
-
-    packet_bytes.append(checksum_value)
+    if len(packet_bytes) != PACKET_SIZE:
+        raise RuntimeError(f"Invalid packet size: {len(packet_bytes)}")
 
     return bytes(packet_bytes)
 
@@ -212,6 +297,20 @@ def read_available_lines(serial_port):
         response = serial_port.readline().decode(errors="ignore").strip()
         if response:
             print(response)
+
+
+def send_hold_packets(serial_port, requested_pwm_values, message_id):
+    for _ in range(3):
+        hold_packet = build_packet(requested_pwm_values, message_id)
+
+        serial_port.write(hold_packet)
+        serial_port.flush()
+        read_available_lines(serial_port)
+
+        message_id = (message_id + 1) & 0xFF
+        time.sleep(0.02)
+
+    return message_id
 
 
 def main():
@@ -237,6 +336,15 @@ def main():
 
     press_order = []
     next_send_time = time.monotonic()
+    message_id = 0
+
+    requested_pwm_values = {
+        "B": SERVO_US_CENTER,
+        "S": SERVO_US_CENTER,
+        "F": SERVO_US_CENTER,
+        "W": SERVO_US_CENTER,
+        "G": SERVO_US_CENTER
+    }
 
     #add guards around this to prevent crashing if no controller
     controller.grab()
@@ -299,7 +407,11 @@ def main():
                 update_press_order(raw_commands, press_order)
                 chosen_commands = choose_two_oldest(raw_commands, press_order)
                 full_state = build_full_state(chosen_commands)
-                packet = build_packet(full_state)
+
+                update_requested_pwm_values(full_state, requested_pwm_values)
+
+                packet = build_packet(requested_pwm_values, message_id)
+                message_id = (message_id + 1) & 0xFF
 
                 serial_port.write(packet)
                 serial_port.flush()
@@ -309,21 +421,11 @@ def main():
                     next_send_time += SEND_DT
 
     except KeyboardInterrupt:   #this doesn't work on shutdown...
-        neutral_state = {
-            "B": NEUTRAL,
-            "S": NEUTRAL,
-            "F": NEUTRAL,
-            "W": NEUTRAL,
-            "G": NEUTRAL
-        }
-
-        neutral_packet = build_packet(neutral_state)
-
-        for _ in range(3):
-            serial_port.write(neutral_packet)
-            serial_port.flush()
-            read_available_lines(serial_port)
-            time.sleep(0.02)
+        message_id = send_hold_packets(
+            serial_port,
+            requested_pwm_values,
+            message_id
+        )
 
         try:
             serial_port.close()

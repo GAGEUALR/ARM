@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 TRUNK_DIR = os.path.expanduser("~/Projects/ARM/trunk")
-ESP_PROJECT_DIR = os.path.join(TRUNK_DIR, "esp", "servo_controller")
+ESP_PROJECT_DIR = os.path.join(TRUNK_DIR, "esp")
 EXPORT_SCRIPT = os.path.expanduser("~/esp/esp-idf/export.sh")
 PORT = "/dev/ttyUSB0"
 
@@ -13,11 +13,15 @@ STATE_DIR = os.path.join(TRUNK_DIR, ".state")
 HASH_FILE = os.path.join(STATE_DIR, "esp_project_sources.sha256")
 
 SOURCE_FILES = [
+    os.path.join(ESP_PROJECT_DIR, "CMakeLists.txt"),
+    os.path.join(ESP_PROJECT_DIR, "sdkconfig"),
+    os.path.join(ESP_PROJECT_DIR, "main", "CMakeLists.txt"),
     os.path.join(ESP_PROJECT_DIR, "main", "main.c"),
     os.path.join(ESP_PROJECT_DIR, "main", "main.h"),
     os.path.join(ESP_PROJECT_DIR, "main", "control.c"),
     os.path.join(ESP_PROJECT_DIR, "main", "control.h"),
     os.path.join(ESP_PROJECT_DIR, "main", "uart.c"),
+    os.path.join(ESP_PROJECT_DIR, "main", "uart.h"),
 ]
 
 
