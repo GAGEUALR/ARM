@@ -22,6 +22,8 @@
 #define STATE_QUEUE_LENGTH 1
 #define RESPONSE_QUEUE_LENGTH 1
 
+#define SERVO_COMMAND_MOVE 0x01
+
 typedef struct {
     int requested_pulse;
     int command_type;

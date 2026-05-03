@@ -25,13 +25,33 @@ void uart_rx_task(void *arg)
                 xQueueOverwrite(servo_command_q, &requested_state);
             }
         }
-        else {
-            uart_write_bytes(
-                USB_UART_NUM,
-                "BAD MESSAGE\n",
-                12);
-        }
     }
+}
+
+void usb_uart_init(void)
+{
+    uart_config_t uart_config = {
+        .baud_rate = USB_UART_BAUD,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    ESP_ERROR_CHECK(uart_driver_install(
+        USB_UART_NUM,
+        UART_RX_BUF_SIZE,
+        0,
+        0,
+        NULL,
+        0
+    ));
+
+    ESP_ERROR_CHECK(uart_param_config(
+        USB_UART_NUM,
+        &uart_config
+    ));
 }
 
 static bool parse_packet(uint8_t *packet, requested_state_t *state)

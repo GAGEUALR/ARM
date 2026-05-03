@@ -14,9 +14,6 @@
 #define UART_CRC_INDEX   14
 #define CRC8_POLYNOMIAL  0x07
 
-#define SERVO_COMMAND_MOVE 0x01
-
-
 typedef struct {
     bool uart_ready;
 } uart_state_t;
