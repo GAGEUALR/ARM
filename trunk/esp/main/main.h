@@ -24,6 +24,12 @@
 
 #define SERVO_COMMAND_MOVE 0x01
 
+#define DEBUG_GPIO_ENABLE 1
+#define DEBUG_LOOP_GPIO   GPIO_NUM_21
+#define DEBUG_PACKET_GPIO GPIO_NUM_22
+#define DEBUG_WRITE_GPIO  GPIO_NUM_23
+
+
 typedef struct {
     int requested_pulse;
     int command_type;

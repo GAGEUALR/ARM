@@ -5,6 +5,11 @@
 static bool parse_packet(uint8_t *packet, requested_state_t *state); // eventually should return error codes
 static uint8_t calculate_crc8(const uint8_t *data, int length);
 bool calculate_crc(const uint8_t *packet);
+static void debug_toggle_packet(void);
+
+#if DEBUG_GPIO_ENABLE
+static bool debugPacketState = false;
+#endif
 
 void uart_rx_task(void *arg)
 {
@@ -22,6 +27,7 @@ void uart_rx_task(void *arg)
 
         if (bytes_read == UART_PACKET_SIZE) {
             if (parse_packet(received_bytes, &requested_state)) {
+                debug_toggle_packet();
                 xQueueOverwrite(servo_command_q, &requested_state);
             }
         }
@@ -52,6 +58,14 @@ void usb_uart_init(void)
         USB_UART_NUM,
         &uart_config
     ));
+}
+
+static void debug_toggle_packet(void)
+{
+#if DEBUG_GPIO_ENABLE
+    debugPacketState = !debugPacketState;
+    gpio_set_level(DEBUG_PACKET_GPIO, debugPacketState);
+#endif
 }
 
 static bool parse_packet(uint8_t *packet, requested_state_t *state)

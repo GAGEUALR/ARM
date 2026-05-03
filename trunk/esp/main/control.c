@@ -8,6 +8,9 @@ static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi);
 static void control_startup(void);
 static void center_all_servos(void);
 static void servo_write_us(servo_id_t servo, uint32_t pulse_us);
+static void debug_gpio_init(void);
+static void debug_toggle_loop(void);
+static void debug_toggle_write(void);
 
 static void update_control_state_from_request(
     servo_state_t *control_servo,
@@ -23,6 +26,11 @@ static void apply_control_state(
 
 control_state_t control_state = {0};
 servo_output_t servo_outputs[SERVO_COUNT] = {0};
+
+#if DEBUG_GPIO_ENABLE
+static bool debugLoopState = false;
+static bool debugWriteState = false;
+#endif
 
 static mcpwm_timer_handle_t servo_timers[2] = {0};
 
@@ -66,6 +74,8 @@ void servo_control_task(void *arg)
     control_startup();
 
     while (!system_state.shutdown_requested) {
+        debug_toggle_loop();
+
         bool command_timed_out;
         int i;
 
@@ -226,6 +236,8 @@ static void center_all_servos(void)
 
 void servo_init(void)
 {
+    debug_gpio_init();
+
     int group_id;
     int i;
 
@@ -311,6 +323,44 @@ void servo_init(void)
     }
 }
 
+static void debug_gpio_init(void)
+{
+#if DEBUG_GPIO_ENABLE
+    gpio_config_t io_conf = {
+        .pin_bit_mask =
+            (1ULL << DEBUG_LOOP_GPIO) |
+            (1ULL << DEBUG_PACKET_GPIO) |
+            (1ULL << DEBUG_WRITE_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+
+    gpio_config(&io_conf);
+
+    gpio_set_level(DEBUG_LOOP_GPIO, 0);
+    gpio_set_level(DEBUG_PACKET_GPIO, 0);
+    gpio_set_level(DEBUG_WRITE_GPIO, 0);
+#endif
+}
+
+static void debug_toggle_loop(void)
+{
+#if DEBUG_GPIO_ENABLE
+    debugLoopState = !debugLoopState;
+    gpio_set_level(DEBUG_LOOP_GPIO, debugLoopState);
+#endif
+}
+
+static void debug_toggle_write(void)
+{
+#if DEBUG_GPIO_ENABLE
+    debugWriteState = !debugWriteState;
+    gpio_set_level(DEBUG_WRITE_GPIO, debugWriteState);
+#endif
+}
+
 static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 {
     if (v < lo) {
@@ -327,6 +377,8 @@ static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 static void servo_write_us(servo_id_t servo, uint32_t pulse_us)
 {
     pulse_us = clamp_u32(pulse_us, SERVO_US_MIN_SAFE, SERVO_US_MAX_SAFE);
+
+    debug_toggle_write();
 
     ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(
         servo_outputs[servo].comparator,
