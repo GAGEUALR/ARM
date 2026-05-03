@@ -20,16 +20,19 @@
 
 #define SERVO_COUNT 5
 #define STATE_QUEUE_LENGTH 1
-
-
+#define RESPONSE_QUEUE_LENGTH 1
 
 typedef struct {
-    bool active;
-    bool direction;
+    int requested_pulse;
+    int command_type;
+    int dac_value;
 } servo_request_t;
 
 typedef struct {
     servo_request_t servos[SERVO_COUNT];
+    int request_version;
+    int message_id;
+    int request_type;
 } requested_state_t;
 
 typedef struct {

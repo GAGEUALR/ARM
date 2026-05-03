@@ -108,14 +108,14 @@ void servo_control_task(void *arg)
 
 static void update_control_state_from_request(servo_state_t *control_servo, const servo_request_t *requested_servo)
 {
-    if (!requested_servo->active) {
+    if (!(requested_servo->command_type == 1)) {
         if (control_servo->active) {
             control_servo->status = decelerating;
         }
         return;
     }
 
-    if (!control_servo->active) {
+    if (!control_servo->command_type == 1) {
         control_servo->active = true;
         control_servo->direction = requested_servo->direction;
         control_servo->status = accelerating;

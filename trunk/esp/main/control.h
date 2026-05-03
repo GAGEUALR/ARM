@@ -40,18 +40,10 @@ typedef enum {
     GRIPPER,
 } servo_id_t;
 
-typedef enum {
-    accelerating,
-    decelerating,
-    at_max_speed,
-    at_target
-} control_status_t;
-
 typedef struct {
     bool active;
-    bool direction;
-    control_status_t status;
     uint32_t current_pulse_us;
+    int32_t current_requested_pulse;
     uint32_t last_written_pulse_us;
     int32_t servo_step_us;
 } servo_state_t;

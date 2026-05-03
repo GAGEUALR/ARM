@@ -1,1 +1,6 @@
+trunk/build/
+build/
+
+trunk/esp/build/
+
 .vscode/

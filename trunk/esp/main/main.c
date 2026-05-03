@@ -1,11 +1,13 @@
 #include "main.h"
 
 QueueHandle_t servo_command_q;
+QueueHandle_t control_response_q;
 system_t system_state = {0};
 
 void app_main(void)
 {
     servo_command_q = xQueueCreate(STATE_QUEUE_LENGTH, sizeof(requested_state_t));
+    control_response_q = xQueueCreate(RESPONSE_QUEUE_LENGTH, sizeof(requested_state_t));
 
     usb_uart_init();
     servo_init();
