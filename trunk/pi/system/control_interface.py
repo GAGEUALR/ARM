@@ -23,7 +23,6 @@ Intestines to GUI
 
 
 import time
-import select
 import serial
 
 from evdev import InputDevice, ecodes
@@ -290,8 +289,6 @@ def build_packet(requested_pwm_values, message_id):
     return bytes(packet_bytes)
 
 
-
-
 def read_available_lines(serial_port):
     while serial_port.in_waiting > 0:
         response = serial_port.readline().decode(errors="ignore").strip()
@@ -356,40 +353,30 @@ def main():
             if wait_timeout < 0:
                 wait_timeout = 0
 
-            #this blocks until three evaluate to true.
-            #I want to continue communication over uart
-            #absolutely every 10ms.
-            ready_to_read = select.select(
-                [controller.fd],
-                [],
-                [],
-                wait_timeout
-            )[0]
 
-            if ready_to_read:
-                for event in controller.read():
-                    if event.type == ecodes.EV_ABS:
-                        if event.code == LT_CODE:
-                            lt_value = event.value
+            for event in controller.read():
+                if event.type == ecodes.EV_ABS:
+                    if event.code == LT_CODE:
+                        lt_value = event.value
 
-                        elif event.code == RT_CODE:
-                            rt_value = event.value
+                    elif event.code == RT_CODE:
+                        rt_value = event.value
 
-                        elif event.code == LSX_CODE:
-                            lsx_value = event.value
+                    elif event.code == LSX_CODE:
+                        lsx_value = event.value
 
-                        elif event.code == RSX_CODE:
-                            rsx_value = event.value
+                    elif event.code == RSX_CODE:
+                        rsx_value = event.value
 
-                        elif event.code == DPAD_X_CODE:
-                            dpx_value = event.value
+                    elif event.code == DPAD_X_CODE:
+                        dpx_value = event.value
 
-                    elif event.type == ecodes.EV_KEY:
-                        if event.code == LB_CODE:
-                            lb_pressed = 1 if event.value else 0
+                elif event.type == ecodes.EV_KEY:
+                    if event.code == LB_CODE:
+                        lb_pressed = 1 if event.value else 0
 
-                        elif event.code == RB_CODE:
-                            rb_pressed = 1 if event.value else 0
+                    elif event.code == RB_CODE:
+                        rb_pressed = 1 if event.value else 0
 
             current_time = time.monotonic()
 
@@ -404,6 +391,7 @@ def main():
                     rb_pressed
                 )
 
+
                 update_press_order(raw_commands, press_order)
                 chosen_commands = choose_two_oldest(raw_commands, press_order)
                 full_state = build_full_state(chosen_commands)
@@ -412,6 +400,17 @@ def main():
 
                 packet = build_packet(requested_pwm_values, message_id)
                 message_id = (message_id + 1) & 0xFF
+
+                print(  "\nlt_value: ", lt_value,
+                        "\nrt_value: ", rt_value,
+                        "\nlsx_value: ", lsx_value,
+                        "\nrsx_value: ", rsx_value,
+                        "\ndpx_value: ", dpx_value,
+                        "\nlb_pressed: ", lb_pressed,
+                        "\nrb_pressed: ", rb_pressed,
+                        "\n"
+                        )
+                
 
                 serial_port.write(packet)
                 serial_port.flush()
