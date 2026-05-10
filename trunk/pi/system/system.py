@@ -1,9 +1,8 @@
-from servo import Servo
-from controller import Controller
-from uart_to_esp import UartCom
-from header import EVENT_PATH, REQUIRED_NAME, STICK_DEADBAND,\
-                   TRIGGER_DEADBAND, ESP_PORT, ESP_BAUD
-
+from .servo import Servo
+from .controller import Controller
+from .uart_to_esp import UartCom
+from .header import EVENT_PATH, REQUIRED_NAME, STICK_DEADBAND,\
+                    TRIGGER_DEADBAND, ESP_PORT, ESP_BAUD
 
 class System:
 
@@ -14,18 +13,6 @@ class System:
         Forearm = Servo("F")
         Wrist = Servo("W")
         Gripper = Servo("G")
-
-        self.servos = [Base, Shoulder, Forearm, Wrist, Gripper]
-
-        self.controller = Controller(EVENT_PATH, REQUIRED_NAME)
-        self.controller.startup()
-
-        self.uart_link = UartCom(ESP_PORT, ESP_BAUD)
-        if not self.uart_link.start_comms():
-            raise RuntimeError("UART startup failed")
-
-        self.message_id = 0
-        self.press_order = []
 
     def update_state(self):
 

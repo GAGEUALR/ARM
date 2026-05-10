@@ -1,9 +1,8 @@
 import subprocess
 import sys
 import time
-from .pi.system.header import FLASH_SCRIPT_PATH
-from system import System
-
+from .system.header import FLASH_SCRIPT_PATH
+from .system.system import System
 
 def startup():
     result = subprocess.run(

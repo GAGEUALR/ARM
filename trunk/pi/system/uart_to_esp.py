@@ -1,5 +1,5 @@
 import serial
-from header import START_BYTE, CRC8_POLYNOMIAL, UPDATE_STATUS_PACKET_TYPE
+from .header import START_BYTE, CRC8_POLYNOMIAL, UPDATE_STATUS_PACKET_TYPE
 
 class UartCom:
       
