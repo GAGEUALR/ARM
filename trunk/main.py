@@ -1,22 +1,46 @@
-import os
 import subprocess
 import sys
-
-TRUNK_PATH = os.path.expanduser("~/Projects/ARM/trunk")
-FLASH_SCRIPT = os.path.join(TRUNK_PATH, "pi", "system", "esp_flash.py")
-CONTROL_SCRIPT = os.path.join(TRUNK_PATH, "pi", "system", "control_interface.py")
+import time
+from header import FLASH_SCRIPT_PATH
+from system import System
 
 
 def startup():
     result = subprocess.run(
-        ["python3", FLASH_SCRIPT, "--check"]
+        ["python3", FLASH_SCRIPT_PATH, "--check"]
     )
 
     if result.returncode != 0:
         print(f"esp_flash.py failed with exit code {result.returncode}")
         sys.exit(result.returncode)
 
+def main():
+
+    system = System()
+    try:
+        while(1):
+
+            spent_time = time.monotonic()
+
+            #assign the controller state to self.servos
+            system.update_state()
+            #limit to two self.servos at a time to prevent large current draw
+            system.limit_active_servos()
+            #compile uart packet
+            system.send_commands()
+            #receive feedback from uart and print error if possible
+
+            elapsed = time.monotonic() - spent_time
+
+            time.sleep(max(0, 0.010 - elapsed))
+            #log events
+
+    except KeyboardInterrupt:
+        print("\nStopping controller mode")
+
+    finally:
+        system.shutdown()
 
 if __name__ == "__main__":
     startup()
-    os.execvp("python3", ["python3", CONTROL_SCRIPT])
+    main()
