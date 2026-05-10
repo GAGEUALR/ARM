@@ -1,7 +1,7 @@
 import subprocess
 import sys
 import time
-from header import FLASH_SCRIPT_PATH
+from .pi.system.header import FLASH_SCRIPT_PATH
 from system import System
 
 
