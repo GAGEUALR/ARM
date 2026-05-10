@@ -70,7 +70,7 @@ static void debug_toggle_packet(void)
 
 static bool parse_packet(uint8_t *packet, requested_state_t *state)
 {
-    if (packet[0] != 0xAA) {
+    if (packet[0] != UART_PACKET_START_BYTE) {
         return false;
     }
 
@@ -78,29 +78,33 @@ static bool parse_packet(uint8_t *packet, requested_state_t *state)
         return false;
     }
 
-    state->request_version = packet[1];
-    state->message_id = packet[2];
-    state->request_type = packet[3];
+    if (packet[UART_PACKET_TYPE_INDEX] != UART_PACKET_TYPE_STATUS) {
+        return false;
+    }
 
-    int byte_num = 4;
+    memset(state, 0, sizeof(*state));
+
+    state->message_id = packet[UART_MESSAGE_ID_INDEX];
+    state->request_type = packet[UART_PACKET_TYPE_INDEX];
 
     for (int i = 0; i < SERVO_COUNT; i++) {
-        uint8_t packed_high = packet[byte_num];
-        uint8_t packed_low = packet[byte_num + 1];
+        uint8_t servo_state = packet[UART_SERVO_STATE_START_INDEX + i];
 
-        state->servos[i].command_type = packed_high >> 4;
-
-        state->servos[i].requested_pulse =
-            ((packed_high & 0x0F) << 8) | packed_low;
-
-        if (state->servos[i].command_type == SERVO_COMMAND_MOVE) {
-            if ((state->servos[i].requested_pulse < 500) ||
-                (state->servos[i].requested_pulse > 2500)) {
-                return false;
-            }
+        if (servo_state == SERVO_STATE_INACTIVE) {
+            state->servos[i].active = false;
+            state->servos[i].direction = false;
         }
-
-        byte_num += 2;
+        else if (servo_state == SERVO_STATE_POSITIVE) {
+            state->servos[i].active = true;
+            state->servos[i].direction = true;
+        }
+        else if (servo_state == SERVO_STATE_NEGATIVE) {
+            state->servos[i].active = true;
+            state->servos[i].direction = false;
+        }
+        else {
+            return false;
+        }
     }
 
     return true;

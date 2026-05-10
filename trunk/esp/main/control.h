@@ -25,11 +25,7 @@
 #define WRIST_MAX_STEP_US_PER_TICK 14
 #define GRIPPER_MAX_STEP_US_PER_TICK 18
 
-
-
 #define CONTROL_LOOP_HZ 100
-
-
 
 typedef enum {
     BASE = 0,
@@ -41,6 +37,7 @@ typedef enum {
 
 typedef struct {
     bool active;
+    bool direction;
     uint32_t current_pulse_us;
     int32_t current_requested_pulse;
     uint32_t last_written_pulse_us;

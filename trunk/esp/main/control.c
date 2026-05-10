@@ -1,9 +1,5 @@
 #include "control.h"
 
-#ifndef SERVO_COMMAND_MOVE
-#define SERVO_COMMAND_MOVE 0x01
-#endif
-
 static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi);
 static void control_startup(void);
 static void center_all_servos(void);
@@ -99,6 +95,7 @@ void servo_control_task(void *arg)
                     control_state.servos[i].current_pulse_us;
 
                 control_state.servos[i].active = false;
+                control_state.servos[i].direction = false;
             }
 
             apply_control_state(
@@ -132,19 +129,18 @@ static void update_control_state_from_request(
     const servo_request_t *requested_servo
 )
 {
-    if (requested_servo->command_type != SERVO_COMMAND_MOVE) {
+    if (!requested_servo->active) {
+        control_servo->active = false;
+        control_servo->direction = false;
+
+        control_servo->current_requested_pulse =
+            (int32_t)control_servo->current_pulse_us;
+
         return;
     }
 
-    control_servo->current_requested_pulse = (int32_t)clamp_u32(
-        (uint32_t)requested_servo->requested_pulse,
-        SERVO_US_MIN_SAFE,
-        SERVO_US_MAX_SAFE
-    );
-
-    control_servo->active =
-        (control_servo->current_requested_pulse !=
-         (int32_t)control_servo->current_pulse_us);
+    control_servo->active = true;
+    control_servo->direction = requested_servo->direction;
 }
 
 static void apply_control_state(
@@ -156,49 +152,51 @@ static void apply_control_state(
 {
     (void)requested_servo;
 
-    uint32_t target_pulse;
+    uint32_t next_pulse;
 
-    target_pulse = clamp_u32(
-        (uint32_t)control_servo->current_requested_pulse,
-        SERVO_US_MIN_SAFE,
-        SERVO_US_MAX_SAFE
-    );
+    next_pulse = control_servo->current_pulse_us;
 
-    *current_step_us = (int32_t)max_step_us;
-
-    if (target_pulse < control_servo->current_pulse_us) {
-        uint32_t difference =
-            control_servo->current_pulse_us - target_pulse;
-
-        if (difference <= max_step_us) {
-            control_servo->current_pulse_us = target_pulse;
-        }
-        else {
-            control_servo->current_pulse_us -= max_step_us;
-        }
-    }
-    else if (target_pulse > control_servo->current_pulse_us) {
-        uint32_t difference =
-            target_pulse - control_servo->current_pulse_us;
-
-        if (difference <= max_step_us) {
-            control_servo->current_pulse_us = target_pulse;
-        }
-        else {
-            control_servo->current_pulse_us += max_step_us;
-        }
-    }
-
-    control_servo->current_pulse_us = clamp_u32(
-        control_servo->current_pulse_us,
-        SERVO_US_MIN_SAFE,
-        SERVO_US_MAX_SAFE
-    );
-
-    if (control_servo->current_pulse_us == target_pulse) {
+    if (!control_servo->active) {
         *current_step_us = 0;
-        control_servo->active = false;
+
+        control_servo->current_requested_pulse =
+            (int32_t)control_servo->current_pulse_us;
+
+        return;
     }
+
+    if (control_servo->direction) {
+        if (control_servo->current_pulse_us >=
+            (SERVO_US_MAX_SAFE - max_step_us)) {
+
+            next_pulse = SERVO_US_MAX_SAFE;
+        }
+        else {
+            next_pulse = control_servo->current_pulse_us + max_step_us;
+        }
+    }
+    else {
+        if (control_servo->current_pulse_us <=
+            (SERVO_US_MIN_SAFE + max_step_us)) {
+
+            next_pulse = SERVO_US_MIN_SAFE;
+        }
+        else {
+            next_pulse = control_servo->current_pulse_us - max_step_us;
+        }
+    }
+
+    next_pulse = clamp_u32(
+        next_pulse,
+        SERVO_US_MIN_SAFE,
+        SERVO_US_MAX_SAFE
+    );
+
+    *current_step_us =
+        (int32_t)next_pulse - (int32_t)control_servo->current_pulse_us;
+
+    control_servo->current_pulse_us = next_pulse;
+    control_servo->current_requested_pulse = (int32_t)next_pulse;
 }
 
 static void control_startup(void)
@@ -209,6 +207,7 @@ static void control_startup(void)
 
     for (i = 0; i < SERVO_COUNT; i++) {
         control_state.servos[i].active = false;
+        control_state.servos[i].direction = false;
         control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
         control_state.servos[i].current_requested_pulse = SERVO_US_CENTER;
         control_state.servos[i].last_written_pulse_us = SERVO_US_CENTER;
@@ -224,6 +223,7 @@ static void center_all_servos(void)
 
     for (i = 0; i < SERVO_COUNT; i++) {
         control_state.servos[i].active = false;
+        control_state.servos[i].direction = false;
         control_state.servos[i].current_pulse_us = SERVO_US_CENTER;
         control_state.servos[i].current_requested_pulse = SERVO_US_CENTER;
         control_state.servos[i].last_written_pulse_us = SERVO_US_CENTER;

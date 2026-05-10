@@ -22,8 +22,6 @@
 #define STATE_QUEUE_LENGTH 1
 #define RESPONSE_QUEUE_LENGTH 1
 
-#define SERVO_COMMAND_MOVE 0x01
-
 #define DEBUG_GPIO_ENABLE 1
 #define DEBUG_LOOP_GPIO   GPIO_NUM_21
 #define DEBUG_PACKET_GPIO GPIO_NUM_22
@@ -31,16 +29,14 @@
 
 
 typedef struct {
-    int requested_pulse;
-    int command_type;
-    int dac_value;
+    bool active;
+    bool direction;
 } servo_request_t;
 
 typedef struct {
     servo_request_t servos[SERVO_COUNT];
-    int request_version;
-    int message_id;
-    int request_type;
+    uint8_t message_id;
+    uint8_t request_type;
 } requested_state_t;
 
 typedef struct {
