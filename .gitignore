@@ -4,3 +4,4 @@ build/
 trunk/esp/build/
 
 .vscode/
+trunk/esp/sdkconfig.backup

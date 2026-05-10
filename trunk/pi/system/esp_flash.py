@@ -6,7 +6,7 @@ import sys
 
 TRUNK_DIR = os.path.expanduser("~/Projects/ARM/trunk")
 ESP_PROJECT_DIR = os.path.join(TRUNK_DIR, "esp")
-EXPORT_SCRIPT = os.path.expanduser("~/esp/esp-idf/export.sh")
+EXPORT_SCRIPT = os.path.expanduser("~/esp/esp-idf-v5.5.3/export.sh")
 PORT = "/dev/ttyUSB0"
 
 STATE_DIR = os.path.join(TRUNK_DIR, ".state")
