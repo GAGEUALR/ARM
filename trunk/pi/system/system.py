@@ -14,6 +14,19 @@ class System:
         Wrist = Servo("W")
         Gripper = Servo("G")
 
+        self.servos = [Base, Shoulder, Forearm, Wrist, Gripper]
+
+        self.controller = Controller(EVENT_PATH, REQUIRED_NAME)
+        self.controller.startup()
+
+        self.uart_link = UartCom(ESP_PORT, ESP_BAUD)
+        if not self.uart_link.start_comms():
+            raise RuntimeError("UART startup failed")
+
+        self.message_id = 0
+        self.press_order = []
+
+        
     def update_state(self):
 
         state = self.controller.read_controller()
