@@ -1,11 +1,13 @@
 #include "uart.h"
-#include <string.h>
-#include <stdint.h>
+#include "control.h"
 
 static bool parse_packet(uint8_t *packet, requested_state_t *state); // eventually should return error codes
 static uint8_t calculate_crc8(const uint8_t *data, int length);
-bool calculate_crc(const uint8_t *packet);
 static void debug_toggle_packet(void);
+static void build_control_response(
+    control_response_t *response,
+    const requested_state_t *requested_state
+);
 
 #if DEBUG_GPIO_ENABLE
 static bool debugPacketState = false;
@@ -30,6 +32,46 @@ void uart_rx_task(void *arg)
                 debug_toggle_packet();
                 xQueueOverwrite(servo_command_q, &requested_state);
             }
+        }
+    }
+}
+
+void uart_tx_task(void *arg)
+{
+    (void)arg;
+
+    uint8_t response_bytes[UART_RESPONSE_PACKET_SIZE];
+    control_response_t response;
+
+    while (1) {
+        if (xQueueReceive(control_response_q, &response, portMAX_DELAY) == pdTRUE) {
+            memset(response_bytes, 0, sizeof(response_bytes));
+
+            response_bytes[0] = UART_PACKET_START_BYTE;
+            response_bytes[UART_MESSAGE_ID_INDEX] = response.message_id;
+            response_bytes[UART_PACKET_TYPE_INDEX] = UART_PACKET_TYPE_FEEDBACK;
+
+            for (int i = 0; i < SERVO_COUNT; i++) {
+                response_bytes[UART_SERVO_STATE_START_INDEX + i] =
+                    response.servo_states[i];
+            }
+
+            response_bytes[UART_ADC_VALID_FLAGS_INDEX] =
+                response.adc_valid_flags;
+
+            for (int i = 0; i < SERVO_COUNT; i++) {
+                response_bytes[UART_ADC_LEVEL_START_INDEX + i] =
+                    response.adc_levels[i] & 0x0F;
+            }
+
+            response_bytes[UART_RESPONSE_CRC_INDEX] =
+                calculate_crc8(response_bytes, UART_RESPONSE_CRC_INDEX);
+
+            uart_write_bytes(
+                USB_UART_NUM,
+                (const char *)response_bytes,
+                UART_RESPONSE_PACKET_SIZE
+            );
         }
     }
 }

@@ -3,6 +3,9 @@
 
 #include "main.h"
 
+#define ADC_LEVEL_INVALID 0x00
+#define ADC_VALID_FLAGS_NONE 0x00
+
 #define BASE_GPIO GPIO_NUM_4
 #define SHOULDER_GPIO GPIO_NUM_17
 #define FOREARM_GPIO GPIO_NUM_16
@@ -56,5 +59,6 @@ typedef struct {
 
 extern const gpio_num_t servo_gpios[SERVO_COUNT];
 extern servo_output_t servo_outputs[SERVO_COUNT];
+
 
 #endif

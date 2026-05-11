@@ -27,7 +27,6 @@
 #define DEBUG_PACKET_GPIO GPIO_NUM_22
 #define DEBUG_WRITE_GPIO  GPIO_NUM_23
 
-
 typedef struct {
     bool active;
     bool direction;
@@ -40,6 +39,13 @@ typedef struct {
 } requested_state_t;
 
 typedef struct {
+    uint8_t message_id;
+    uint8_t servo_states[SERVO_COUNT];
+    uint8_t adc_valid_flags;
+    uint8_t adc_levels[SERVO_COUNT];
+} control_response_t;
+
+typedef struct {
     volatile bool shutdown_requested;
 } system_t;
 
@@ -50,10 +56,11 @@ void servo_init(void);
 
 void servo_control_task(void *arg);
 void uart_rx_task(void *arg);
-
+void uart_tx_task(void *arg);
 
 
 extern QueueHandle_t servo_command_q;
+extern QueueHandle_t control_response_q;
 extern system_t system_state;
 
 #endif

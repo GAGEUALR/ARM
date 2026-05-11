@@ -1,4 +1,5 @@
 #include "control.h"
+#include "uart.h"
 
 static uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi);
 static void control_startup(void);
@@ -7,18 +8,19 @@ static void servo_write_us(servo_id_t servo, uint32_t pulse_us);
 static void debug_gpio_init(void);
 static void debug_toggle_loop(void);
 static void debug_toggle_write(void);
-
-static void update_control_state_from_request(
-    servo_state_t *control_servo,
-    const servo_request_t *requested_servo
-);
-
+static void update_control_state_from_request(servo_state_t *control_servo,
+                                    const servo_request_t *requested_servo);
 static void apply_control_state(
     servo_state_t *control_servo,
     int32_t *current_step_us,
     uint32_t max_step_us,
     const servo_request_t *requested_servo
 );
+static void build_control_response(
+    control_response_t *response,
+    const requested_state_t *requested_state
+);
+
 
 control_state_t control_state = {0};
 servo_output_t servo_outputs[SERVO_COUNT] = {0};
@@ -54,8 +56,8 @@ static const uint32_t servo_max_step_us[SERVO_COUNT] = {
     GRIPPER_MAX_STEP_US_PER_TICK
 };
 
-void servo_control_task(void *arg)
-{
+void servo_control_task(void *arg){
+
     (void)arg;
 
     TickType_t lastWakeTime = xTaskGetTickCount();
@@ -64,6 +66,7 @@ void servo_control_task(void *arg)
 
     requested_state_t received_state = {0};
     requested_state_t requested_state = {0};
+    control_response_t control_response = {0};
 
     TickType_t last_command_tick = xTaskGetTickCount();
 
@@ -117,11 +120,39 @@ void servo_control_task(void *arg)
                     control_state.servos[i].current_pulse_us;
             }
         }
-
+        build_control_response(&control_response, &requested_state);
+        xQueueOverwrite(control_response_q, &control_response);
         vTaskDelayUntil(&lastWakeTime, periodTicks);
     }
 
     center_all_servos();
+}
+
+static void build_control_response(
+    control_response_t *response,
+    const requested_state_t *requested_state
+)
+{
+    int i;
+
+    memset(response, 0, sizeof(*response));
+
+    response->message_id = requested_state->message_id;
+    response->adc_valid_flags = ADC_VALID_FLAGS_NONE;
+
+    for (i = 0; i < SERVO_COUNT; i++) {
+        if (!control_state.servos[i].active) {
+            response->servo_states[i] = SERVO_STATE_INACTIVE;
+        }
+        else if (control_state.servos[i].direction) {
+            response->servo_states[i] = SERVO_STATE_POSITIVE;
+        }
+        else {
+            response->servo_states[i] = SERVO_STATE_NEGATIVE;
+        }
+
+        response->adc_levels[i] = ADC_LEVEL_INVALID;
+    }
 }
 
 static void update_control_state_from_request(
