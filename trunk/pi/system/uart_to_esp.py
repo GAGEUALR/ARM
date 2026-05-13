@@ -1,6 +1,8 @@
 import serial
-from .header import START_BYTE, CRC8_POLYNOMIAL, UPDATE_STATUS_PACKET_TYPE
-
+from .header import START_BYTE, CRC8_POLYNOMIAL, UPDATE_STATUS_PACKET_TYPE, \
+                    FEEDBACK_PACKET_TYPE, FEEDBACK_PACKET_SIZE, FEEDBACK_CRC_INDEX, \
+                    FEEDBACK_SERVO_STATE_START_INDEX, FEEDBACK_ADC_VALID_FLAGS_INDEX, \
+                    FEEDBACK_ADC_LEVEL_START_INDEX
 class UartCom:
       
       def __init__(self, port_name, baud):
@@ -10,6 +12,7 @@ class UartCom:
             self.baud = baud
             self.port = None
             self.connected = None
+            self.receive_buffer = bytearray()
 
       def start_comms(self):
 
@@ -64,6 +67,73 @@ class UartCom:
                   return 0
             
             return 1
+
+      def read_feedback_packet(self):
+
+            if self.port is None:
+                  return None
+
+            try:
+                  waiting_bytes = self.port.in_waiting
+
+                  if waiting_bytes > 0:
+                        self.receive_buffer.extend(self.port.read(waiting_bytes))
+
+                  latest_feedback = None
+
+                  while len(self.receive_buffer) >= FEEDBACK_PACKET_SIZE:
+
+                        if self.receive_buffer[0] != START_BYTE:
+                              start_index = self.receive_buffer.find(bytes([START_BYTE]))
+
+                              if start_index == -1:
+                                    self.receive_buffer.clear()
+                                    return latest_feedback
+
+                              del self.receive_buffer[:start_index]
+
+                              if len(self.receive_buffer) < FEEDBACK_PACKET_SIZE:
+                                    return latest_feedback
+
+                        packet = self.receive_buffer[:FEEDBACK_PACKET_SIZE]
+
+                        if packet[2] != ord(FEEDBACK_PACKET_TYPE):
+                              del self.receive_buffer[0]
+                              continue
+
+                        crc = self.calculate_crc8(packet[:FEEDBACK_CRC_INDEX])
+
+                        if crc != packet[FEEDBACK_CRC_INDEX]:
+                              del self.receive_buffer[0]
+                              continue
+
+                        servo_states = []
+
+                        for state in packet[
+                              FEEDBACK_SERVO_STATE_START_INDEX:
+                              FEEDBACK_SERVO_STATE_START_INDEX + 5
+                        ]:
+                              servo_states.append(chr(state))
+
+                        adc_levels = list(packet[
+                              FEEDBACK_ADC_LEVEL_START_INDEX:
+                              FEEDBACK_ADC_LEVEL_START_INDEX + 5
+                        ])
+
+                        latest_feedback = {
+                              "message_id": packet[1],
+                              "servo_states": servo_states,
+                              "adc_valid_flags": packet[FEEDBACK_ADC_VALID_FLAGS_INDEX],
+                              "adc_levels": adc_levels
+                        }
+
+                        del self.receive_buffer[:FEEDBACK_PACKET_SIZE]
+
+                  return latest_feedback
+
+            except Exception as e:
+                  print("\nError reading feedback packet:\n", e)
+                  return None
 
       def calculate_crc8(self, data):
             crc = 0x00

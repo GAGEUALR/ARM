@@ -4,10 +4,6 @@
 static bool parse_packet(uint8_t *packet, requested_state_t *state); // eventually should return error codes
 static uint8_t calculate_crc8(const uint8_t *data, int length);
 static void debug_toggle_packet(void);
-static void build_control_response(
-    control_response_t *response,
-    const requested_state_t *requested_state
-);
 
 #if DEBUG_GPIO_ENABLE
 static bool debugPacketState = false;

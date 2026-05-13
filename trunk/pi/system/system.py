@@ -94,10 +94,19 @@ class System:
     def send_commands(self):
 
         packet = self.uart_link.build_update_status_packet(self.servos, self.message_id)
+
         if packet is None:
             return
-        self.message_id = (self.message_id + 1) & 0xFF
-        self.uart_link.send_packet(packet)
+
+        if self.uart_link.send_packet(packet):
+            self.message_id = (self.message_id + 1) & 0xFF
+
+    def read_from_esp(self):
+
+        feedback = self.uart_link.read_feedback_packet()
+
+        if feedback is not None:
+            print(f'\n{feedback}\n')
 
     def shutdown(self):
         self.controller.shutdown()

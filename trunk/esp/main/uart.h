@@ -31,9 +31,6 @@
 #define SERVO_STATE_POSITIVE 'P'
 #define SERVO_STATE_NEGATIVE 'N'
 
-#define UART_PACKET_TYPE_FEEDBACK 'F'
-
-
 #define CRC8_POLYNOMIAL  0x07
 
 typedef struct {

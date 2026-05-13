@@ -29,10 +29,14 @@ def main():
             system.send_commands()
             #receive feedback from uart and print error if possible
 
+            system.read_from_esp()
+
             elapsed = time.monotonic() - spent_time
 
+            #we want to send a packet every 10ms, this needs to be tested out
             time.sleep(max(0, 0.010 - elapsed))
             #log events
+
 
     except KeyboardInterrupt:
         print("\nStopping controller mode")
