@@ -34,7 +34,7 @@ def main():
             elapsed = time.monotonic() - spent_time
 
             #we want to send a packet every 10ms, this needs to be tested out
-            time.sleep(max(0, 0.010 - elapsed))
+            time.sleep(max(0, 0.020 - elapsed))
             #log events
 
 
