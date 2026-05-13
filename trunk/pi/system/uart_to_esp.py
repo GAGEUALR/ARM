@@ -2,7 +2,7 @@ import serial
 from .header import START_BYTE, CRC8_POLYNOMIAL, UPDATE_STATUS_PACKET_TYPE, \
                     FEEDBACK_PACKET_TYPE, FEEDBACK_PACKET_SIZE, FEEDBACK_CRC_INDEX, \
                     FEEDBACK_SERVO_STATE_START_INDEX, FEEDBACK_ADC_VALID_FLAGS_INDEX, \
-                    FEEDBACK_ADC_LEVEL_START_INDEX
+                    FEEDBACK_ADC_LEVEL_START_INDEX, FEEDBACK_PWM_START_INDEX
 class UartCom:
       
       def __init__(self, port_name, baud):
@@ -120,11 +120,22 @@ class UartCom:
                               FEEDBACK_ADC_LEVEL_START_INDEX + 5
                         ])
 
+                        pwm_values = []
+
+                        for i in range(5):
+                              pwm_index = FEEDBACK_PWM_START_INDEX + (i * 2)
+
+                              pwm_value = packet[pwm_index] | (packet[pwm_index + 1] << 8)
+
+                              pwm_values.append(pwm_value)
+
+
                         latest_feedback = {
                               "message_id": packet[1],
                               "servo_states": servo_states,
                               "adc_valid_flags": packet[FEEDBACK_ADC_VALID_FLAGS_INDEX],
-                              "adc_levels": adc_levels
+                              "adc_levels": adc_levels,
+                              "pwm_values": pwm_values
                         }
 
                         del self.receive_buffer[:FEEDBACK_PACKET_SIZE]

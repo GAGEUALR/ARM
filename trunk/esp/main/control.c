@@ -150,7 +150,7 @@ static void build_control_response(
         else {
             response->servo_states[i] = SERVO_STATE_NEGATIVE;
         }
-
+        response->pwm_values[i] = control_state.servos[i].current_pulse_us;
         response->adc_levels[i] = ADC_LEVEL_INVALID;
     }
 }

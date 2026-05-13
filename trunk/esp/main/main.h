@@ -43,6 +43,7 @@ typedef struct {
     uint8_t servo_states[SERVO_COUNT];
     uint8_t adc_valid_flags;
     uint8_t adc_levels[SERVO_COUNT];
+    uint16_t pwm_values[SERVO_COUNT];
 } control_response_t;
 
 typedef struct {

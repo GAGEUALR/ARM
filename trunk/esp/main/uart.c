@@ -60,6 +60,16 @@ void uart_tx_task(void *arg)
                     response.adc_levels[i] & 0x0F;
             }
 
+            int pwm_index = UART_PWM_START_INDEX;
+
+            for (int i = 0; i < SERVO_COUNT; i++) {
+                response_bytes[pwm_index] = response.pwm_values[i] & 0xFF;
+                response_bytes[pwm_index + 1] = (response.pwm_values[i] >> 8) & 0xFF;
+
+                pwm_index += 2;
+            }
+
+
             response_bytes[UART_RESPONSE_CRC_INDEX] =
                 calculate_crc8(response_bytes, UART_RESPONSE_CRC_INDEX);
 
